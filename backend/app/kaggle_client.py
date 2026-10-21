@@ -22,6 +22,9 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 
+from . import kaggle_probe
+
+
 def _cmd() -> list[str]:
     """Cho phép thay lệnh khi kiểm thử (KAGGLE_CMD). Mặc định: python -m kaggle."""
     if os.environ.get("KAGGLE_CMD"):
@@ -93,7 +96,7 @@ def parse_quota(text: str) -> Quota:
     return Quota(g[0], g[1], t[0], t[1], refresh, json.dumps(rows))
 
 
-def _run_sync(args: list[str], token: str, username: str | None, timeout: float) -> str:
+def _run_sync(args: list[str], token: str, username: str | None, timeout: float, cmd: list[str] | None = None) -> str:
     home = tempfile.mkdtemp(prefix="kg_")
     try:
         env = {
@@ -110,7 +113,7 @@ def _run_sync(args: list[str], token: str, username: str | None, timeout: float)
             env["KAGGLE_KEY"] = token
         try:
             p = subprocess.run(
-                [*_cmd(), *args], env=env, capture_output=True, text=True, timeout=timeout
+                [*(cmd or _cmd()), *args], env=env, capture_output=True, text=True, timeout=timeout
             )
         except FileNotFoundError as e:
             raise KaggleError("Không chạy được Kaggle CLI (đã cài package `kaggle` chưa?)") from e
@@ -125,12 +128,31 @@ def _run_sync(args: list[str], token: str, username: str | None, timeout: float)
         shutil.rmtree(home, ignore_errors=True)
 
 
-async def run_kaggle(args, token, username=None, timeout: float | None = None, sem: asyncio.Semaphore | None = None) -> str:
+async def run_kaggle(args, token, username=None, timeout: float | None = None, sem: asyncio.Semaphore | None = None, cmd: list[str] | None = None) -> str:
     t = timeout if timeout is not None else DEFAULT_TIMEOUT
     if sem is None:
-        return await asyncio.to_thread(_run_sync, args, token, username, t)
+        return await asyncio.to_thread(_run_sync, args, token, username, t, cmd)
     async with sem:
-        return await asyncio.to_thread(_run_sync, args, token, username, t)
+        return await asyncio.to_thread(_run_sync, args, token, username, t, cmd)
+
+
+def _probe_cmd() -> list[str]:
+    """Script thu thập session. Có thể thay bằng KAGGLE_PROBE_CMD khi kiểm thử."""
+    if os.environ.get("KAGGLE_PROBE_CMD"):
+        return shlex.split(os.environ["KAGGLE_PROBE_CMD"])
+    return [sys.executable, kaggle_probe.__file__]
+
+
+async def fetch_sessions(token, username, opts: dict, timeout: float, sem=None) -> dict:
+    """Chạy kaggle_probe cho một tài khoản, trả về dict {items, listed, partial} hoặc {error}."""
+    out = await run_kaggle([json.dumps(opts)], token, username, timeout, sem, cmd=_probe_cmd())
+    for line in reversed(out.splitlines()):  # CLI có thể in thêm chữ; chỉ đọc dòng có tiền tố riêng
+        if line.startswith(kaggle_probe.SENTINEL):
+            try:
+                return json.loads(line[len(kaggle_probe.SENTINEL):])
+            except ValueError:
+                break
+    raise KaggleError("Không đọc được kết quả thu thập session: " + out.strip()[-200:])
 
 
 async def fetch_quota(token, username=None, timeout=None, sem=None) -> Quota:

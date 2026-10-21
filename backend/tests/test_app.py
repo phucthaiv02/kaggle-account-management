@@ -1,13 +1,9 @@
-"""Kiểm thử: app → Supabase Data API (giả lập trên Postgres thật) + `kaggle` giả.
+"""Kiểm thử app → Supabase Data API (giả lập trên Postgres thật) + `kaggle` giả.
 
-- Postgres thật (pixeltable-pgserver); supabase/schema.sql được chạy nguyên văn, truy vấn
-  chạy bằng role service_role thật nên các lệnh GRANT/REVOKE/RLS được kiểm thử.
-- Data API là bản giả lập tối thiểu (fake_postgrest.py), không phải PostgREST thật.
-- `kaggle` giả mô phỏng đúng định dạng `kaggle quota --format json` (đối chiếu mã nguồn
-  kaggle 2.2.x), có in thêm chữ hướng dẫn xác thực trước JSON như CLI thật hay làm.
+Fixture dùng chung nằm trong conftest.py. Data API là bản giả lập tối thiểu (fake_postgrest.py),
+không phải PostgREST thật; supabase/schema.sql được chạy nguyên văn và truy vấn chạy bằng role
+service_role thật nên các lệnh GRANT/REVOKE/RLS được kiểm thử.
 """
-import sys
-import tempfile
 from pathlib import Path
 
 import psycopg
@@ -15,91 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from .fake_postgrest import FakePostgREST
-
-ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_SQL = (ROOT / "supabase" / "schema.sql").read_text()
-API_KEY = "sb_secret_test_key_123"
-
-FAKE_KAGGLE = r'''
-import json, os, sys
-# Tiến trình con không được thấy bí mật của ứng dụng
-for k in ("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SECRET_KEY", "ADMIN_PASSWORD", "DATABASE_URL"):
-    if k in os.environ:
-        sys.stderr.write("LEAK " + k); sys.exit(3)
-if "kg_" not in os.environ.get("HOME", ""):
-    sys.stderr.write("HOME không được cô lập"); sys.exit(3)
-tok = os.environ.get("KAGGLE_API_TOKEN", "")
-if tok.startswith("bad"):
-    sys.stderr.write("401 Unauthorized"); sys.exit(1)
-print("Authentication required to call the Kaggle API.\n  Option A: Environment variable")
-args = sys.argv[1:]
-if args[:1] == ["quota"]:
-    print(json.dumps([
-        {"resource": "GPU", "used": "16.33h", "remaining": "13.67h", "total": "30.00h", "refreshAt": "2026-10-24T00:00:00+00:00"},
-        {"resource": "TPU", "used": "0.00h", "remaining": "20.00h", "total": "20.00h", "refreshAt": "2026-10-24T00:00:00+00:00"},
-    ], indent=2))
-elif args[:2] == ["kernels", "list"]:
-    print("ref,title\nme/nb1,Notebook 1")
-'''
-
-
-@pytest.fixture(scope="session")
-def pg_url():
-    import pixeltable_pgserver as pg
-
-    srv = pg.get_server(tempfile.mkdtemp(prefix="pgdata_"))
-    yield srv.get_uri()
-    srv.cleanup()
-
-
-def reset_database(pg_url, apply_schema=True):
-    with psycopg.connect(pg_url, autocommit=True) as c:
-        c.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
-        for role, attr in (("anon", ""), ("authenticated", ""), ("service_role", "BYPASSRLS")):
-            c.execute(
-                f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='{role}') "
-                f"THEN CREATE ROLE {role} NOLOGIN {attr}; END IF; END $$;"
-            )
-        c.execute("GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role")
-        if apply_schema:
-            c.execute(SCHEMA_SQL)
-
-
-@pytest.fixture()
-def api(pg_url):
-    return FakePostgREST(pg_url, API_KEY)
-
-
-@pytest.fixture()
-def client(pg_url, api, tmp_path, monkeypatch):
-    from cryptography.fernet import Fernet
-
-    from backend.app import db
-
-    fake = tmp_path / "fake_kaggle.py"
-    fake.write_text(FAKE_KAGGLE)
-    monkeypatch.setenv("KAGGLE_CMD", f"{sys.executable} {fake}")
-    monkeypatch.setenv("SUPABASE_URL", "https://abcd.supabase.co")
-    monkeypatch.setenv("SUPABASE_SECRET_KEY", API_KEY)
-    monkeypatch.setenv("SECRET_KEY", Fernet.generate_key().decode())
-    monkeypatch.setenv("ADMIN_PASSWORD", "pw123")
-    reset_database(pg_url)
-    monkeypatch.setattr(db, "_transport", api.transport())
-    db.reset_client()
-    from backend.app import main
-
-    with TestClient(main.app) as c:
-        yield c
-    db.reset_client()
-
-
-def login(c, pw="pw123"):
-    return c.post("/api/login", json={"password": pw})
-
-
-def add(c, name, token="token-aaaaaaaa"):
-    return c.post("/api/accounts", json={"name": name, "token": token})
-
+from .helpers import API_KEY, ROOT, SCHEMA_SQL, add, login, reset_database
 
 # ---------- schema & bảo mật ----------
 def test_health(client):
@@ -119,9 +31,9 @@ def test_public_roles_cannot_read_tables_but_service_role_can(client, pg_url):
                 c.execute("SELECT * FROM login_fails")
     with psycopg.connect(pg_url) as c:
         rls = c.execute(
-            "SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('accounts','quota_snapshots','login_fails')"
+            "SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('accounts','quota_snapshots','login_fails','kernel_sessions')"
         ).fetchall()
-    assert len(rls) == 3 and all(r[1] for r in rls), "RLS phải bật trên cả 3 bảng"
+    assert len(rls) == 4 and all(r[1] for r in rls), "RLS phải bật trên cả 4 bảng"
 
 
 def test_schema_is_idempotent(pg_url, client):

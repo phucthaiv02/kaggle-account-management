@@ -14,10 +14,11 @@ import httpx
 import psycopg
 from psycopg import errors, sql
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
-TABLES = {"accounts", "quota_snapshots", "login_fails"}
+TABLES = {"accounts", "quota_snapshots", "login_fails", "kernel_sessions"}
 OPS = {"eq": "=", "lt": "<", "gt": ">", "lte": "<=", "gte": ">="}
-RESERVED = {"select", "order", "limit", "offset"}
+RESERVED = {"select", "order", "limit", "offset", "on_conflict"}
 
 
 def _json(obj, status=200, headers=None):
@@ -64,6 +65,8 @@ class FakePostgREST:
             return _json({"code": "23505", "message": str(e).splitlines()[0]}, 409)
         except errors.UndefinedTable as e:
             return _json({"code": "42P01", "message": str(e).splitlines()[0]}, 404)
+        except errors.UndefinedColumn as e:
+            return _json({"code": "42703", "message": str(e).splitlines()[0]}, 400)
         except errors.InsufficientPrivilege as e:
             return _json({"code": "42501", "message": str(e).splitlines()[0]}, 403)
 
@@ -76,8 +79,11 @@ class FakePostgREST:
             colsql = sql.SQL("*") if cols == "*" else sql.SQL(", ").join(sql.Identifier(x) for x in cols.split(","))
             q = sql.SQL("SELECT {} FROM {}").format(colsql, t) + where
             if "order" in p:
-                col, _, direction = p["order"].partition(".")
-                q += sql.SQL(" ORDER BY {} {}").format(sql.Identifier(col), sql.SQL("DESC" if direction == "desc" else "ASC"))
+                col, *mods = p["order"].split(".")
+                nulls = " NULLS LAST" if "nullslast" in mods else " NULLS FIRST" if "nullsfirst" in mods else ""
+                q += sql.SQL(" ORDER BY {} {}").format(
+                    sql.Identifier(col), sql.SQL(("DESC" if "desc" in mods else "ASC") + nulls)
+                )
             if "limit" in p:
                 q += sql.SQL(" LIMIT {}").format(sql.Literal(int(p["limit"])))
             rows = c.execute(q, wvals).fetchall()
@@ -89,12 +95,25 @@ class FakePostgREST:
         if req.method == "POST":
             data = json.loads(req.content)
             data = data if isinstance(data, list) else [data]
+            if any(set(r) != set(data[0]) for r in data):  # PostgREST thật từ chối: PGRST102
+                return _json({"code": "PGRST102", "message": "All object keys must match"}, 400)
+            upsert = "on_conflict" in p and "resolution=merge-duplicates" in prefer
             out = []
             for row in data:
-                q = sql.SQL("INSERT INTO {} ({}) VALUES ({}) RETURNING *").format(
-                    t, sql.SQL(", ").join(map(sql.Identifier, row)), sql.SQL(", ").join(sql.Placeholder() * len(row)),
+                cols = list(row)
+                q = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
+                    t, sql.SQL(", ").join(map(sql.Identifier, cols)), sql.SQL(", ").join(sql.Placeholder() * len(cols)),
                 )
-                out += c.execute(q, list(row.values())).fetchall()
+                if upsert:
+                    keys = p["on_conflict"].split(",")
+                    sets = [x for x in cols if x not in keys]
+                    q += sql.SQL(" ON CONFLICT ({}) DO UPDATE SET {}").format(
+                        sql.SQL(", ").join(map(sql.Identifier, keys)),
+                        sql.SQL(", ").join(sql.SQL("{0} = EXCLUDED.{0}").format(sql.Identifier(x)) for x in sets),
+                    )
+                q += sql.SQL(" RETURNING *")
+                vals = [Jsonb(v) if isinstance(v, (list, dict)) else v for v in row.values()]
+                out += c.execute(q, vals).fetchall()
             return _json(out, 201) if "return=representation" in prefer else httpx.Response(201)
         if req.method == "PATCH":
             data = json.loads(req.content)

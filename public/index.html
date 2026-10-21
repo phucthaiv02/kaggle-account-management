@@ -8,23 +8,30 @@
   :root {
     --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #6a737d; --line: #e3e6ea;
     --accent: #20a0ff; --ok: #1a9d5a; --warn: #d98a00; --bad: #d64545;
-    --gpu: #20a0ff; --tpu: #8b5cf6; --track: #e9ecef;
+    --gpu: #20a0ff; --tpu: #8b5cf6; --track: #e9ecef; --hover: #f0f3f6;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #14171a; --card: #1d2125; --text: #e8eaed; --muted: #9aa3ad; --line: #2c3238; --track: #2c3238; }
+    :root { --bg: #14171a; --card: #1d2125; --text: #e8eaed; --muted: #9aa3ad; --line: #2c3238; --track: #2c3238; --hover: #252a30; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { display: flex; align-items: center; gap: 12px; padding: 14px 24px; background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
-  header h1 { font-size: 17px; margin: 0; flex: 1; }
-  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 60px; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 24px; background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0 8px 0 0; }
+  header .spacer { flex: 1; }
+  nav { display: flex; gap: 4px; }
+  nav a { padding: 6px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; font-size: 14px; }
+  nav a:hover { background: var(--hover); }
+  nav a.active { background: var(--hover); color: var(--text); font-weight: 600; }
+  main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 60px; }
   button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--card); color: var(--text); padding: 7px 14px; border-radius: 8px; }
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.danger { color: var(--bad); }
   button:disabled { opacity: .5; cursor: default; }
-  input, textarea { font: inherit; width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); }
+  input, textarea, select { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); }
+  input:not([type=checkbox]), textarea { width: 100%; }
   label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  a { color: var(--accent); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
   .card h3 { margin: 0; font-size: 16px; }
@@ -36,7 +43,7 @@
   .track { height: 10px; border-radius: 6px; background: var(--track); overflow: hidden; }
   .fill { height: 100%; border-radius: 6px; transition: width .3s; }
   .err { color: var(--bad); font-size: 13px; margin-top: 10px; word-break: break-word; }
-  .actions { margin-top: 14px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .actions { margin-top: 14px; display: flex; gap: 6px; }
   .actions button { padding: 4px 10px; font-size: 13px; }
   .login { max-width: 340px; margin: 12vh auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 24px; }
   .login h1 { margin: 0 0 8px; font-size: 20px; }
@@ -46,8 +53,51 @@
   .empty { text-align: center; color: var(--muted); padding: 60px 0; }
   .summary { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 18px; color: var(--muted); font-size: 14px; }
   .summary b { color: var(--text); }
-  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow: auto; max-height: 300px; font-size: 12px; }
   .hidden { display: none !important; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); background: var(--bg); cursor: pointer; color: var(--text); }
+
+  /* ----- Sessions ----- */
+  .chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .chip { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .chip .n { font-size: 24px; font-weight: 600; line-height: 1.2; }
+  .chip .l { font-size: 12px; color: var(--muted); }
+  .strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 14px; }
+  .acc { flex: 0 0 auto; min-width: 200px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; }
+  .acc.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .acc .t { font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; gap: 10px; }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .toolbar input[type=search] { width: 240px; }
+  .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text); margin: 0; }
+  .tablewrap { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 980px; font-size: 14px; }
+  th { text-align: left; font-weight: 600; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr.srow { cursor: pointer; }
+  tr.srow:hover td { background: var(--hover); }
+  tr:last-child td { border-bottom: 0; }
+  .nb { max-width: 340px; }
+  .nb .title { font-weight: 600; word-break: break-word; }
+  .nb .ref { font-size: 12px; color: var(--muted); word-break: break-all; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .st-running { color: #1478d4; background: rgba(32,160,255,.14); }
+  .st-running::before { animation: pulse 1.4s infinite; }
+  .st-queued { color: var(--warn); background: rgba(217,138,0,.14); }
+  .st-complete { color: var(--ok); background: rgba(26,157,90,.14); }
+  .st-error { color: var(--bad); background: rgba(214,69,69,.14); }
+  .st-cancel { color: var(--warn); background: rgba(217,138,0,.14); }
+  .st-unknown { color: var(--muted); background: var(--track); }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .mach { white-space: nowrap; font-weight: 600; }
+  .mach.gpu { color: var(--gpu); } .mach.tpu { color: var(--tpu); }
+  .warnt { color: var(--warn); font-weight: 600; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 6px; background: var(--track); color: var(--muted); margin: 2px 4px 0 0; }
+  .comps a, .comps span { display: block; font-size: 13px; word-break: break-all; }
+  tr.detail td { background: var(--hover); }
+  .kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px 24px; }
+  .kv .k { font-size: 12px; color: var(--muted); }
+  .kv .v { font-size: 13px; word-break: break-word; }
+  .footnote { margin-top: 14px; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -66,25 +116,82 @@
 <div id="appView" class="hidden">
   <header>
     <h1>Kaggle Accounts</h1>
-    <button id="btnRefreshAll">Làm mới tất cả</button>
-    <button id="btnAdd" class="primary">+ Thêm tài khoản</button>
+    <nav>
+      <a href="#/accounts" id="navAcc">Tài khoản</a>
+      <a href="#/sessions" id="navSes">Sessions</a>
+    </nav>
+    <span class="spacer"></span>
+    <span id="actAcc" class="row">
+      <button id="btnRefreshAll">Làm mới tất cả</button>
+      <button id="btnAdd" class="primary">+ Thêm tài khoản</button>
+    </span>
+    <span id="actSes" class="row hidden">
+      <button id="btnRefreshSes" class="primary">Làm mới sessions</button>
+    </span>
     <button id="btnLogout">Đăng xuất</button>
   </header>
+
   <main>
-    <div id="notice" class="hidden" style="margin-bottom:12px;font-size:14px"></div>
-    <div id="summary" class="summary"></div>
-    <div id="list" class="grid"></div>
-    <div id="empty" class="empty hidden">Chưa có tài khoản nào. Bấm "Thêm tài khoản" để bắt đầu.</div>
+    <!-- Trang Tài khoản -->
+    <div id="viewAcc">
+      <div id="notice" class="hidden" style="margin-bottom:12px;font-size:14px"></div>
+      <div id="summary" class="summary"></div>
+      <div id="list" class="grid"></div>
+      <div id="empty" class="empty hidden">Chưa có tài khoản nào. Bấm "Thêm tài khoản" để bắt đầu.</div>
+    </div>
+
+    <!-- Trang Sessions -->
+    <div id="viewSes" class="hidden">
+      <div id="sNotice" class="hidden" style="margin-bottom:12px;font-size:14px"></div>
+      <div id="sChips" class="chips"></div>
+      <div id="sAccounts" class="strip"></div>
+      <div class="toolbar">
+        <select id="fStatus" aria-label="Lọc trạng thái">
+          <option value="all">Mọi trạng thái</option>
+          <option value="running">Đang chạy</option>
+          <option value="queued">Hàng chờ</option>
+          <option value="complete">Hoàn tất</option>
+          <option value="error">Lỗi</option>
+          <option value="other">Khác (hủy, không rõ)</option>
+        </select>
+        <select id="fAccount" aria-label="Lọc tài khoản"></select>
+        <select id="fAccel" aria-label="Lọc loại máy">
+          <option value="all">GPU / TPU / CPU</option>
+          <option value="gpu">GPU</option>
+          <option value="tpu">TPU</option>
+          <option value="cpu">CPU</option>
+        </select>
+        <label class="chk"><input type="checkbox" id="fComp"> Chỉ gắn competition</label>
+        <input type="search" id="fSearch" placeholder="Tìm notebook, competition…" aria-label="Tìm kiếm">
+        <span class="sub" id="sCount"></span>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>Trạng thái</th><th>Notebook</th><th>Tài khoản</th><th>Máy</th>
+            <th>Thời gian chạy</th><th>Bắt đầu</th><th>Competition</th><th></th>
+          </tr></thead>
+          <tbody id="sBody"></tbody>
+        </table>
+      </div>
+      <div id="sEmpty" class="empty hidden"></div>
+      <div class="sub footnote">
+        Kaggle không công khai danh sách các phiên tương tác (interactive session) đang mở trong trình soạn thảo.
+        Trang này hiển thị <b>phiên chạy gần nhất của từng notebook</b> (Save &amp; Run All hoặc đẩy qua API).
+        "Bắt đầu" là thời điểm chạy gần nhất do Kaggle báo; thời lượng của phiên đã xong là <b>ước tính</b> từ log.
+        Giới hạn một phiên: 12 giờ với CPU/GPU, 9 giờ với TPU.
+      </div>
+    </div>
   </main>
 </div>
 
 <dialog id="dlgAccount">
   <form method="dialog" id="accForm">
-    <h3 id="dlgTitle" style="margin:0 0 4px">Thêm tài khoản</h3>
+    <h3 style="margin:0 0 4px">Thêm tài khoản</h3>
     <label for="fName">Tên gợi nhớ</label>
     <input id="fName" required maxlength="80">
-    <label for="fToken">Access token Kaggle <span id="tokenHint"></span></label>
-    <input id="fToken" type="password" autocomplete="off">
+    <label for="fToken">Access token Kaggle</label>
+    <input id="fToken" type="password" autocomplete="off" required>
     <label for="fUser">Username Kaggle (chỉ cần với khóa API kiểu cũ, có thể bỏ trống)</label>
     <input id="fUser" autocomplete="off">
     <label for="fNote">Ghi chú</label>
@@ -97,16 +204,14 @@
   </form>
 </dialog>
 
-<dialog id="dlgInfo">
-  <h3 id="infoTitle" style="margin:0 0 10px"></h3>
-  <pre id="infoBody"></pre>
-  <menu><button id="infoClose">Đóng</button></menu>
-</dialog>
-
 <script>
 const $ = (s) => document.querySelector(s);
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
 let accounts = [];
-let editingId = null;
+let sdata = { accounts: [], sessions: [], now: null };
+const sf = { status: "all", account: "all", accel: "all", comp: false, q: "" };
+const expanded = new Set();
 
 async function api(path, opts = {}) {
   const r = await fetch("/api" + path, {
@@ -128,15 +233,16 @@ function showApp() { $("#loginView").classList.add("hidden"); $("#appView").clas
 $("#loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("#loginErr").textContent = "";
-  try { await api("/login", { method: "POST", body: { password: $("#pw").value } }); $("#pw").value = ""; await load(); }
+  try { await api("/login", { method: "POST", body: { password: $("#pw").value } }); $("#pw").value = ""; await route(); }
   catch (err) { $("#loginErr").textContent = err.message; }
 });
 $("#btnLogout").onclick = async () => { await api("/logout", { method: "POST" }).catch(() => {}); showLogin(); };
 
+// ---------- tiện ích hiển thị ----------
 function fmtH(v) { return v == null ? "–" : v.toFixed(2).replace(/\.?0+$/, "") + "h"; }
-function ago(ts) {
-  if (!ts) return "chưa kiểm tra";
-  const d = new Date(ts); const m = Math.round((Date.now() - d) / 60000);
+function ago(ts, none = "chưa kiểm tra") {
+  if (!ts) return none;
+  const m = Math.round((Date.now() - new Date(ts)) / 60000);
   if (m < 1) return "vừa xong"; if (m < 60) return m + " phút trước";
   if (m < 1440) return Math.round(m / 60) + " giờ trước"; return Math.round(m / 1440) + " ngày trước";
 }
@@ -144,14 +250,34 @@ function fmtTime(ts) {
   if (!ts) return "";
   return new Date(ts).toLocaleString("vi-VN", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
+function fmtDur(sec) {
+  if (sec == null || !isFinite(sec) || sec < 0) return "—";
+  const m = Math.floor(sec / 60), h = Math.floor(m / 60);
+  if (m < 1) return "dưới 1 phút";
+  return h ? `${h} giờ ${String(m % 60).padStart(2, "0")} phút` : `${m} phút`;
+}
+let noticeTimer;
+function notice(sel, text, warn) {
+  const n = $(sel); n.textContent = text; n.style.color = warn ? "var(--warn)" : "var(--ok)";
+  n.classList.remove("hidden"); clearTimeout(noticeTimer); noticeTimer = setTimeout(() => n.classList.add("hidden"), 9000);
+}
 
+// Liên kết an toàn: chỉ dựng URL từ slug đã kiểm tra, luôn mở tab mới
+const PAIR = /^([\w.-]+)\/([\w.-]+)$/, SLUG = /^[A-Za-z0-9][\w.-]*$/;
+function kernelUrl(ref) { const m = PAIR.exec(ref || ""); return m ? `https://www.kaggle.com/code/${m[1]}/${m[2]}` : null; }
+function datasetUrl(ref) { const m = PAIR.exec(ref || ""); return m ? `https://www.kaggle.com/datasets/${m[1]}/${m[2]}` : null; }
+function competitionSlug(s) { return String(s || "").replace(/^.*\/competitions\//, "").replace(/^competitions\//, ""); }
+function competitionUrl(s) { const c = competitionSlug(s); return SLUG.test(c) ? `https://www.kaggle.com/competitions/${c}` : null; }
+function link(text, url, cls) {
+  if (!url) return el("span", cls, text);
+  const a = el("a", cls, text); a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer";
+  a.addEventListener("click", (e) => e.stopPropagation()); return a;
+}
+
+// ---------- Trang Tài khoản ----------
 function meter(label, used, total, color) {
-  const wrap = document.createElement("div"); wrap.className = "meter";
-  const lab = document.createElement("div"); lab.className = "lab";
-  const l = document.createElement("span"); l.textContent = label;
-  const r = document.createElement("span");
-  const track = document.createElement("div"); track.className = "track";
-  const fill = document.createElement("div"); fill.className = "fill";
+  const wrap = el("div", "meter"), lab = el("div", "lab");
+  const r = el("span"), track = el("div", "track"), fill = el("div", "fill");
   if (used == null || total == null || total <= 0) { r.textContent = "không có dữ liệu"; fill.style.width = "0"; }
   else {
     const remain = Math.max(total - used, 0), pct = Math.min(used / total * 100, 100);
@@ -159,111 +285,301 @@ function meter(label, used, total, color) {
     fill.style.width = pct + "%";
     fill.style.background = remain / total < 0.1 ? "var(--bad)" : remain / total < 0.25 ? "var(--warn)" : color;
   }
-  lab.append(l, r); track.append(fill); wrap.append(lab, track); return wrap;
+  lab.append(el("span", "", label), r); track.append(fill); wrap.append(lab, track); return wrap;
 }
 
-function btn(text, onclick, cls = "") { const b = document.createElement("button"); b.textContent = text; b.className = cls; b.onclick = onclick; return b; }
-
-function render() {
+function renderAccounts() {
   const list = $("#list"); list.replaceChildren();
   $("#empty").classList.toggle("hidden", accounts.length > 0);
-  let gpuLeft = 0, tpuLeft = 0, errs = 0;
+  let gpuLeft = 0, tpuLeft = 0, errs = 0, running = 0;
   for (const a of accounts) {
-    const q = a.quota; if (q) { gpuLeft += Math.max((q.gpu_total ?? 0) - (q.gpu_used ?? 0), 0); tpuLeft += Math.max((q.tpu_total ?? 0) - (q.tpu_used ?? 0), 0); }
+    const q = a.quota;
+    if (q) { gpuLeft += Math.max((q.gpu_total ?? 0) - (q.gpu_used ?? 0), 0); tpuLeft += Math.max((q.tpu_total ?? 0) - (q.tpu_used ?? 0), 0); }
     if (a.last_error) errs++;
-    const c = document.createElement("div"); c.className = "card";
-    const top = document.createElement("div"); top.className = "row between";
-    const h = document.createElement("h3"); h.textContent = a.name;
-    const when = document.createElement("span"); when.className = "sub"; when.textContent = ago(a.last_checked);
-    top.append(h, when); c.append(top);
-    if (a.username) { const u = document.createElement("div"); u.className = "sub"; u.textContent = "@" + a.username; c.append(u); }
-    if (a.note) { const n = document.createElement("div"); n.className = "sub"; n.textContent = a.note; c.append(n); }
+    running += a.running_sessions || 0;
+    const c = el("div", "card"), top = el("div", "row between");
+    top.append(el("h3", "", a.name), el("span", "sub", ago(a.last_checked))); c.append(top);
+    if (a.username) c.append(el("div", "sub", "@" + a.username));
+    if (a.note) c.append(el("div", "sub", a.note));
+    if (a.running_sessions) {
+      const p = el("button", "pill", `▶ ${a.running_sessions} session đang chạy`); p.style.marginTop = "8px";
+      p.onclick = () => { sf.account = String(a.id); sf.status = "running"; location.hash = "#/sessions"; };
+      c.append(p);
+    }
     c.append(meter("GPU", q?.gpu_used, q?.gpu_total, "var(--gpu)"), meter("TPU", q?.tpu_used, q?.tpu_total, "var(--tpu)"));
-    if (q?.refresh_at) { const rs = document.createElement("div"); rs.className = "sub"; rs.style.marginTop = "10px"; rs.textContent = "Quota reset: " + fmtTime(q.refresh_at); c.append(rs); }
-    if (a.last_error) { const e = document.createElement("div"); e.className = "err"; e.textContent = a.last_error; c.append(e); }
-    const act = document.createElement("div"); act.className = "actions";
-    act.append(
-      btn("Làm mới", async (ev) => { ev.target.disabled = true; try { await api(`/accounts/${a.id}/refresh`, { method: "POST" }); } finally { await load(); } }),
-      btn("Notebook", () => showKernels(a)),
-      btn("Lịch sử", () => showHistory(a)),
-      btn("Sửa", () => openEdit(a)),
-      btn("Xóa", async () => { if (confirm(`Xóa tài khoản "${a.name}"?`)) { await api(`/accounts/${a.id}`, { method: "DELETE" }); load(); } }, "danger"),
-    );
-    c.append(act); list.append(c);
+    if (q?.refresh_at) { const rs = el("div", "sub", "Quota reset: " + fmtTime(q.refresh_at)); rs.style.marginTop = "10px"; c.append(rs); }
+    if (a.last_error) c.append(el("div", "err", a.last_error));
+    const act = el("div", "actions"), del = el("button", "danger", "Xóa");
+    del.onclick = async () => { if (confirm(`Xóa tài khoản "${a.name}"?`)) { await api(`/accounts/${a.id}`, { method: "DELETE" }); loadAccounts(); } };
+    act.append(del); c.append(act); list.append(c);
   }
   const s = $("#summary"); s.replaceChildren();
-  for (const [k, v] of [["Tài khoản", accounts.length], ["GPU còn lại (tổng)", fmtH(gpuLeft)], ["TPU còn lại (tổng)", fmtH(tpuLeft)], ["Lỗi", errs]]) {
-    const sp = document.createElement("span"); sp.append(k + ": "); const b = document.createElement("b"); b.textContent = v; sp.append(b); s.append(sp);
+  for (const [k, v] of [["Tài khoản", accounts.length], ["Session đang chạy", running], ["GPU còn lại (tổng)", fmtH(gpuLeft)], ["TPU còn lại (tổng)", fmtH(tpuLeft)], ["Lỗi", errs]]) {
+    const sp = el("span", "", k + ": "); sp.append(el("b", "", v)); s.append(sp);
   }
 }
 
-async function load() {
-  try { accounts = await api("/accounts"); showApp(); render(); } catch (e) { /* đã chuyển về đăng nhập */ }
+async function loadAccounts() {
+  try { accounts = await api("/accounts"); showApp(); renderAccounts(); } catch (e) { /* đã chuyển về đăng nhập */ }
 }
 
-// --- thêm / sửa ---
-function openAdd() {
-  editingId = null; $("#dlgTitle").textContent = "Thêm tài khoản";
+$("#btnAdd").onclick = () => {
   for (const id of ["#fName", "#fToken", "#fUser", "#fNote"]) $(id).value = "";
-  $("#fToken").required = true; $("#tokenHint").textContent = ""; $("#accErr").textContent = "";
-  $("#dlgAccount").showModal();
-}
-function openEdit(a) {
-  editingId = a.id; $("#dlgTitle").textContent = "Sửa tài khoản";
-  $("#fName").value = a.name; $("#fToken").value = ""; $("#fUser").value = a.username || ""; $("#fNote").value = a.note || "";
-  $("#fToken").required = false; $("#tokenHint").textContent = "(để trống nếu không đổi)"; $("#accErr").textContent = "";
-  $("#dlgAccount").showModal();
-}
-$("#btnAdd").onclick = openAdd;
+  $("#accErr").textContent = ""; $("#dlgAccount").showModal();
+};
 $("#accCancel").onclick = () => $("#dlgAccount").close();
 $("#accForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const body = { name: $("#fName").value, username: $("#fUser").value, note: $("#fNote").value };
-  if ($("#fToken").value) body.token = $("#fToken").value;
+  const body = { name: $("#fName").value, username: $("#fUser").value, note: $("#fNote").value, token: $("#fToken").value };
   $("#accSave").disabled = true; $("#accErr").textContent = "";
   try {
-    const res = editingId == null
-      ? await api("/accounts", { method: "POST", body })
-      : await api(`/accounts/${editingId}`, { method: "PATCH", body });
-    $("#dlgAccount").close(); await load();
+    const res = await api("/accounts", { method: "POST", body });
+    $("#dlgAccount").close(); await loadAccounts();
     if (res.check && !res.check.ok) alert("Đã lưu, nhưng kiểm tra token thất bại:\n" + res.check.error);
   } catch (err) { $("#accErr").textContent = err.message; }
   finally { $("#accSave").disabled = false; }
 });
 
-// --- thông tin phụ ---
-function info(title, text) { $("#infoTitle").textContent = title; $("#infoBody").textContent = text; $("#dlgInfo").showModal(); }
-$("#infoClose").onclick = () => $("#dlgInfo").close();
-async function showKernels(a) {
-  try { const r = await api(`/accounts/${a.id}/kernels`); info(`Notebook của ${a.name}`, r.csv || "(trống)"); }
-  catch (e) { info(`Notebook của ${a.name}`, "Lỗi: " + e.message); }
-}
-async function showHistory(a) {
-  const h = await api(`/accounts/${a.id}/history`);
-  const lines = h.slice(-40).reverse().map((r) => `${fmtTime(r.ts)}  GPU ${fmtH(r.gpu_used)}/${fmtH(r.gpu_total)}  TPU ${fmtH(r.tpu_used)}/${fmtH(r.tpu_total)}`);
-  info(`Lịch sử quota: ${a.name}`, lines.join("\n") || "(chưa có dữ liệu)");
-}
-
 $("#btnRefreshAll").onclick = async (ev) => {
   const b = ev.target; b.disabled = true; b.textContent = "Đang làm mới…";
   try {
     const r = await api("/refresh-all", { method: "POST" });
-    await load();
+    await loadAccounts();
     const parts = [`Đã làm mới ${r.done}/${r.total} tài khoản`];
     if (r.failed) parts.push(`${r.failed} lỗi (xem trên thẻ)`);
     if (r.skipped) parts.push(`${r.skipped} chưa kịp xử lý, bấm lại để tiếp tục`);
-    notice(parts.join(" · "), r.failed || r.skipped);
-  } catch (e) { notice(e.message, true); }
+    notice("#notice", parts.join(" · "), r.failed || r.skipped);
+  } catch (e) { notice("#notice", e.message, true); }
   finally { b.disabled = false; b.textContent = "Làm mới tất cả"; }
 };
 
-let noticeTimer;
-function notice(text, warn) {
-  const n = $("#notice"); n.textContent = text; n.style.color = warn ? "var(--warn)" : "var(--ok)";
-  n.classList.remove("hidden"); clearTimeout(noticeTimer); noticeTimer = setTimeout(() => n.classList.add("hidden"), 8000);
+// ---------- Trang Sessions ----------
+const STATUS = {
+  running: ["Đang chạy", "st-running"], queued: ["Hàng chờ", "st-queued"], complete: ["Hoàn tất", "st-complete"],
+  error: ["Lỗi", "st-error"], cancel_requested: ["Đang hủy", "st-cancel"], cancel_acknowledged: ["Đã hủy", "st-cancel"],
+  new_script: ["Mới", "st-unknown"], unknown: ["Không rõ", "st-unknown"],
+};
+const statusInfo = (s) => STATUS[s] || STATUS.unknown;
+const ACTIVE = (s) => s === "running" || s === "queued";
+
+function machineLabel(s) {
+  const shape = s.machine_shape || "";
+  if (s.accelerator === "tpu") { const m = /v\d+e?/i.exec(shape); return "TPU" + (m ? " " + m[0].toUpperCase() : ""); }
+  if (s.accelerator === "gpu") {
+    const k = ["T4", "P100", "L4", "A100", "H100"].find((x) => new RegExp(x, "i").test(shape));
+    return "GPU" + (k ? " " + k : "") + (/x\s?2|2x|dual/i.test(shape) ? " ×2" : "");
+  }
+  return "CPU";
+}
+const limitHours = (s) => (s.accelerator === "tpu" ? 9 : 12);
+
+// Thời gian chạy: phiên đang chạy/chờ tính từ mốc bắt đầu đến giờ; phiên đã xong dùng thời lượng ước tính
+function elapsedSec(s, nowMs) {
+  if (ACTIVE(s.status)) {
+    const t = Date.parse(s.last_run_time); return isNaN(t) ? null : Math.max((nowMs - t) / 1000, 0);
+  }
+  return s.duration_seconds != null && s.duration_seconds >= 0 ? s.duration_seconds : null;
+}
+function setElapsedCell(cell, s, nowMs) {
+  const sec = elapsedSec(s, nowMs); cell.replaceChildren();
+  cell.append(el("span", "", fmtDur(sec)));
+  if (s.status === "queued" && sec != null) cell.append(el("div", "sub", "đang chờ máy"));
+  if (!ACTIVE(s.status) && sec != null) cell.append(el("div", "sub", "ước tính từ log"));
+  if (s.status === "running" && sec != null) {
+    const lim = limitHours(s) * 3600;
+    if (sec >= lim) cell.append(el("div", "warnt", `⚠ đã quá giới hạn ${limitHours(s)} giờ`));
+    else if (sec >= lim * 0.8) cell.append(el("div", "warnt", `⚠ gần giới hạn ${limitHours(s)} giờ`));
+  }
 }
 
-load();
+function matchStatus(s) {
+  if (sf.status === "all") return true;
+  if (sf.status === "other") return !["running", "queued", "complete", "error"].includes(s.status);
+  return s.status === sf.status;
+}
+function filtered() {
+  const q = sf.q.trim().toLowerCase();
+  const list = sdata.sessions.filter((s) =>
+    matchStatus(s)
+    && (sf.account === "all" || String(s.account_id) === sf.account)
+    && (sf.accel === "all" || s.accelerator === sf.accel)
+    && (!sf.comp || (s.competitions || []).length > 0)
+    && (!q || [s.title, s.ref, ...(s.competitions || [])].join(" ").toLowerCase().includes(q))
+  );
+  // Đang chạy / chờ lên đầu, còn lại theo thời điểm chạy mới nhất
+  return list.sort((a, b) => (ACTIVE(b.status) - ACTIVE(a.status)) || (Date.parse(b.last_run_time) || 0) - (Date.parse(a.last_run_time) || 0));
+}
+const accName = (id) => (sdata.accounts.find((a) => a.id === id) || {}).name || `#${id}`;
+
+function kv(k, v) {
+  const d = el("div"); d.append(el("div", "k", k));
+  const val = el("div", "v"); if (v instanceof Node) val.append(v); else val.textContent = v == null || v === "" ? "—" : String(v);
+  d.append(val); return d;
+}
+function linkList(items, urlFn) {
+  if (!items || !items.length) return "—";
+  const box = el("div");
+  items.forEach((x) => { const row = el("div"); row.append(link(x, urlFn(x))); box.append(row); });
+  return box;
+}
+
+function renderDetail(s) {
+  const tr = el("tr", "detail"), td = el("td"); td.colSpan = 8;
+  const g = el("div", "kv");
+  g.append(
+    kv("Phiên bản", s.version ? `v${s.version}` : "—"),
+    kv("Loại / ngôn ngữ", [s.kernel_type, s.language].filter(Boolean).join(" · ")),
+    kv("Quyền riêng tư", s.is_private == null ? "—" : s.is_private ? "Riêng tư" : "Công khai"),
+    kv("Internet", s.enable_internet == null ? "—" : s.enable_internet ? "Bật" : "Tắt"),
+    kv("Máy (Kaggle báo)", s.machine_shape),
+    kv("Môi trường (docker image)", s.docker_image),
+    kv("Lượt vote", s.total_votes),
+    kv("Competition", linkList((s.competitions || []).map(competitionSlug), competitionUrl)),
+    kv("Dataset đính kèm", linkList(s.datasets, datasetUrl)),
+    kv("Model đính kèm", (s.models || []).length ? s.models.join(", ") : "—"),
+    kv("Notebook nguồn", linkList(s.kernel_sources, kernelUrl)),
+    kv("Quan sát lần đầu", fmtTime(s.first_seen_at)),
+    kv("Đổi trạng thái lúc (quan sát)", fmtTime(s.status_changed_at)),
+    kv("Cập nhật lần cuối", fmtTime(s.updated_at)),
+  );
+  if (s.failure_message) { const f = kv("Thông báo lỗi", s.failure_message); f.style.gridColumn = "1 / -1"; f.querySelector(".v").style.color = "var(--bad)"; g.append(f); }
+  td.append(g); tr.append(td); return tr;
+}
+
+function renderSessionRow(s, nowMs) {
+  const tr = el("tr", "srow");
+  const [label, cls] = statusInfo(s.status);
+  const st = el("td"); st.append(el("span", "badge " + cls, label)); tr.append(st);
+
+  const nb = el("td", "nb"); nb.append(link(s.title || s.ref, kernelUrl(s.ref), "title"));
+  nb.append(el("div", "ref", s.ref));
+  const tags = el("div");
+  if (s.is_private) tags.append(el("span", "tag", "riêng tư"));
+  if (s.version) tags.append(el("span", "tag", "v" + s.version));
+  nb.append(tags); tr.append(nb);
+
+  tr.append(el("td", "", accName(s.account_id)));
+  tr.append(el("td", "", "")); tr.lastChild.append(el("span", "mach " + s.accelerator, machineLabel(s)));
+
+  const dur = el("td"); setElapsedCell(dur, s, nowMs); if (ACTIVE(s.status)) dur.dataset.live = "1"; tr.append(dur);
+
+  const start = el("td"); start.append(el("div", "", fmtTime(s.last_run_time) || "—"));
+  if (s.last_run_time) start.append(el("div", "sub", ago(s.last_run_time))); tr.append(start);
+
+  const comp = el("td", "comps");
+  if ((s.competitions || []).length) (s.competitions).forEach((c) => comp.append(link(competitionSlug(c), competitionUrl(c))));
+  else comp.append(el("span", "sub", "—"));
+  tr.append(comp);
+
+  tr.append(el("td", "sub", expanded.has(s.id) ? "▾" : "▸"));
+  tr.onclick = () => { expanded.has(s.id) ? expanded.delete(s.id) : expanded.add(s.id); renderSessions(); };
+  tr._s = s;
+  return tr;
+}
+
+function renderChips(list, nowMs) {
+  const c = $("#sChips"); c.replaceChildren();
+  const n = (st) => list.filter((s) => s.status === st).length;
+  const runAcc = new Set(list.filter((s) => s.status === "running").map((s) => s.account_id)).size;
+  let gpuSec = 0;
+  list.forEach((s) => { if (s.accelerator === "gpu") gpuSec += elapsedSec(s, nowMs) || 0; });
+  const items = [
+    [n("running"), "Đang chạy", "var(--accent)"], [runAcc, "Tài khoản đang chạy", null], [n("queued"), "Hàng chờ", null],
+    [n("complete"), "Hoàn tất", "var(--ok)"], [n("error"), "Lỗi", n("error") ? "var(--bad)" : null],
+    [(gpuSec / 3600).toFixed(1) + "h", "Giờ GPU ước tính (theo bộ lọc)", null],
+  ];
+  for (const [v, l, color] of items) {
+    const chip = el("div", "chip"), num = el("div", "n", v); if (color) num.style.color = color;
+    chip.append(num, el("div", "l", l)); c.append(chip);
+  }
+}
+
+function renderAccStrip(nowMs) {
+  const strip = $("#sAccounts"); strip.replaceChildren();
+  for (const a of sdata.accounts) {
+    const run = sdata.sessions.filter((s) => s.account_id === a.id && s.status === "running").length;
+    const box = el("div", "acc" + (sf.account === String(a.id) ? " sel" : ""));
+    const t = el("div", "t"); t.append(el("span", "", a.name));
+    const rb = el("span", run ? "badge st-running" : "sub", run ? `${run} đang chạy` : "rảnh"); t.append(rb); box.append(t);
+    const left = a.gpu_total != null ? Math.max(a.gpu_total - (a.gpu_used || 0), 0) : null;
+    box.append(el("div", "sub", `GPU còn ${fmtH(left)} · cập nhật ${ago(a.sessions_checked_at, "chưa lấy")}`));
+    if (a.sessions_error) box.append(el("div", "err", a.sessions_error));
+    box.onclick = () => { sf.account = sf.account === String(a.id) ? "all" : String(a.id); $("#fAccount").value = sf.account; renderSessions(); };
+    strip.append(box);
+  }
+}
+
+function renderSessions() {
+  const nowMs = Date.now(), list = filtered();
+  renderChips(list, nowMs); renderAccStrip(nowMs);
+  const body = $("#sBody"); body.replaceChildren();
+  for (const s of list) { body.append(renderSessionRow(s, nowMs)); if (expanded.has(s.id)) body.append(renderDetail(s)); }
+  $("#sCount").textContent = `${list.length}/${sdata.sessions.length} session`;
+  const empty = $("#sEmpty");
+  empty.classList.toggle("hidden", list.length > 0);
+  if (!list.length) empty.textContent = sdata.sessions.length
+    ? "Không có session nào khớp bộ lọc."
+    : 'Chưa có dữ liệu. Bấm "Làm mới sessions" để lấy từ Kaggle.';
+}
+
+function syncAccountFilter() {
+  const sel = $("#fAccount"); sel.replaceChildren();
+  sel.append(new Option("Mọi tài khoản", "all"));
+  sdata.accounts.forEach((a) => sel.append(new Option(a.name, String(a.id))));
+  if (![...sel.options].some((o) => o.value === sf.account)) sf.account = "all";
+  sel.value = sf.account; $("#fStatus").value = sf.status;
+}
+
+async function loadSessions() {
+  try { sdata = await api("/sessions"); } catch (e) {
+    if (e.message === "Chưa đăng nhập") return;
+    showApp(); sdata = { accounts: [], sessions: [], now: null }; renderSessions();
+    const em = $("#sEmpty"); em.classList.remove("hidden"); em.style.color = "var(--bad)"; em.textContent = e.message; return;
+  }
+  showApp(); $("#sEmpty").style.color = ""; syncAccountFilter(); renderSessions();
+}
+
+$("#btnRefreshSes").onclick = async (ev) => {
+  const b = ev.target; b.disabled = true; b.textContent = "Đang lấy từ Kaggle…";
+  try {
+    const r = await api("/sessions/refresh", { method: "POST" });
+    await loadSessions();
+    const parts = [`Đã cập nhật ${r.done}/${r.total} tài khoản`, `${r.running} session đang chạy`];
+    if (r.failed) parts.push(`${r.failed} tài khoản lỗi (xem ở thanh tài khoản)`);
+    if (r.skipped) parts.push(`${r.skipped} chưa kịp xử lý, bấm lại để tiếp tục`);
+    if (r.partial) parts.push("một số notebook chưa kịp kiểm tra, bấm lại để bổ sung");
+    notice("#sNotice", parts.join(" · "), r.failed || r.skipped || r.partial);
+  } catch (e) { notice("#sNotice", e.message, true); }
+  finally { b.disabled = false; b.textContent = "Làm mới sessions"; }
+};
+
+$("#fStatus").onchange = (e) => { sf.status = e.target.value; renderSessions(); };
+$("#fAccount").onchange = (e) => { sf.account = e.target.value; renderSessions(); };
+$("#fAccel").onchange = (e) => { sf.accel = e.target.value; renderSessions(); };
+$("#fComp").onchange = (e) => { sf.comp = e.target.checked; renderSessions(); };
+$("#fSearch").oninput = (e) => { sf.q = e.target.value; renderSessions(); };
+
+// Cập nhật đồng hồ của các phiên đang chạy mỗi 30 giây mà không dựng lại bảng
+setInterval(() => {
+  const now = Date.now();
+  document.querySelectorAll("#sBody tr.srow").forEach((tr) => {
+    const cell = tr.querySelector("td[data-live]"); if (cell && tr._s) setElapsedCell(cell, tr._s, now);
+  });
+}, 30000);
+
+// ---------- điều hướng ----------
+async function route() {
+  const page = location.hash.startsWith("#/sessions") ? "sessions" : "accounts";
+  $("#viewAcc").classList.toggle("hidden", page !== "accounts");
+  $("#viewSes").classList.toggle("hidden", page !== "sessions");
+  $("#actAcc").classList.toggle("hidden", page !== "accounts");
+  $("#actSes").classList.toggle("hidden", page !== "sessions");
+  $("#navAcc").classList.toggle("active", page === "accounts");
+  $("#navSes").classList.toggle("active", page === "sessions");
+  await (page === "sessions" ? loadSessions() : loadAccounts());
+}
+window.addEventListener("hashchange", route);
+route();
 </script>
 </body>
 </html>

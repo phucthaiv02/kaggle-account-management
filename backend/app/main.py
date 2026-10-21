@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import auth, db
+from . import auth, db, sessions
 from . import kaggle_client as kc
 from .crypto import decrypt, encrypt
 from .db import Conflict, DBError, eq
@@ -24,6 +24,12 @@ ON_VERCEL = bool(os.environ.get("VERCEL"))
 LOGIN_MAX_PER_IP = 5
 LOGIN_MAX_GLOBAL = 30
 LOGIN_WINDOW_MIN = 15
+
+# Theo dõi session: số notebook liệt kê / hỏi trạng thái mỗi lần, và thời gian tối đa cho mỗi tài khoản
+SESSIONS_LIMIT = int(os.environ.get("SESSIONS_LIMIT", "30"))
+SESSIONS_STATUS_LIMIT = int(os.environ.get("SESSIONS_STATUS_LIMIT", "20"))
+SESSIONS_DURATION_BUDGET = int(os.environ.get("SESSIONS_DURATION_BUDGET", "3"))
+SESSIONS_TIMEOUT = float(os.environ.get("SESSIONS_TIMEOUT", "40"))
 
 # Không bao giờ lấy token_enc khi trả danh sách ra giao diện
 ACC_COLS = "id,name,username,note,created_at,last_checked,last_error,gpu_used,gpu_total,tpu_used,tpu_total,refresh_at"
@@ -65,7 +71,7 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "?"
 
 
-def _account_view(row: dict) -> dict:
+def _account_view(row: dict, running: int = 0) -> dict:
     has_quota = any(row.get(k) is not None for k in ("gpu_total", "tpu_total"))
     quota = None
     if has_quota:
@@ -73,7 +79,7 @@ def _account_view(row: dict) -> dict:
     return {
         "id": row["id"], "name": row["name"], "username": row["username"], "note": row["note"],
         "created_at": row["created_at"], "last_checked": row["last_checked"],
-        "last_error": row["last_error"], "quota": quota,
+        "last_error": row["last_error"], "quota": quota, "running_sessions": running,
     }
 
 
@@ -188,7 +194,13 @@ def logout(response: Response):
 def list_accounts():
     rows = db.select("accounts", ACC_COLS)
     rows.sort(key=lambda r: r["name"].lower())
-    return [_account_view(r) for r in rows]
+    running: dict[int, int] = {}
+    try:  # chưa chạy lại schema.sql (chưa có bảng session) thì trang này vẫn phải dùng được
+        for r in db.select("kernel_sessions", "account_id", {"status": eq("running")}):
+            running[r["account_id"]] = running.get(r["account_id"], 0) + 1
+    except DBError:
+        pass
+    return [_account_view(r, running.get(r["id"], 0)) for r in rows]
 
 
 @app.post("/api/accounts", status_code=201, dependencies=[Depends(require_auth)])
@@ -264,6 +276,72 @@ async def kernels(account_id: int):
     except (kc.KaggleError, RuntimeError) as e:
         raise HTTPException(502, str(e))
     return {"csv": out}
+
+
+# ---------- theo dõi session ----------
+def _save_sessions_state(account_id: int, error: str | None) -> None:
+    db.update("accounts", {"id": eq(account_id)}, {"sessions_checked_at": db.iso(db.utcnow()), "sessions_error": error})
+
+
+def _store_sessions(account_id: int, rows: list[dict]) -> None:
+    db.upsert("kernel_sessions", rows, "account_id,ref,version")
+    _save_sessions_state(account_id, None)
+    db.delete("kernel_sessions", {"account_id": eq(account_id), "updated_at": f"lt.{db.ago(days=90)}"})
+
+
+async def refresh_sessions_account(acc: dict, budget_end: float, sem: asyncio.Semaphore) -> dict:
+    timeout = min(SESSIONS_TIMEOUT, budget_end - time.monotonic())
+    if timeout < 8:
+        return {"ok": False, "skipped": True}
+    known = await asyncio.to_thread(
+        db.select, "kernel_sessions", "*", {"account_id": eq(acc["id"])}, None, 2000
+    )
+    opts = sessions.probe_opts(
+        known, SESSIONS_LIMIT, SESSIONS_STATUS_LIMIT, SESSIONS_DURATION_BUDGET, max(5.0, timeout - 8)
+    )
+    try:
+        res = await kc.fetch_sessions(decrypt(acc["token_enc"]), acc["username"], opts, timeout, sem)
+        if res.get("error"):
+            raise kc.KaggleError(res["error"])
+    except (kc.KaggleError, RuntimeError) as e:
+        await asyncio.to_thread(_save_sessions_state, acc["id"], str(e))
+        return {"ok": False, "error": str(e)}
+    rows = sessions.merge(acc["id"], res.get("items", []), known, db.iso(db.utcnow()))
+    await asyncio.to_thread(_store_sessions, acc["id"], rows)
+    return {
+        "ok": True, "n": len(res.get("items", [])), "partial": bool(res.get("partial")),
+        "running": sum(1 for r in rows if r["status"] == "running"),
+    }
+
+
+async def refresh_sessions_all() -> dict:
+    accs = await asyncio.to_thread(db.select, "accounts", "id,username,token_enc,sessions_checked_at")
+    # Chưa từng cập nhật đứng trước, rồi đến cũ nhất
+    accs.sort(key=lambda a: (a["sessions_checked_at"] is not None, a["sessions_checked_at"] or "", a["id"]))
+    budget_end = time.monotonic() + REFRESH_BUDGET
+    sem = asyncio.Semaphore(kc.CONCURRENCY)
+    results = await asyncio.gather(*(refresh_sessions_account(a, budget_end, sem) for a in accs), return_exceptions=True)
+    ok = [r for r in results if isinstance(r, dict) and r.get("ok")]
+    skipped = sum(1 for r in results if isinstance(r, dict) and r.get("skipped"))
+    return {
+        "total": len(accs), "done": len(ok), "skipped": skipped, "failed": len(accs) - len(ok) - skipped,
+        "running": sum(r["running"] for r in ok), "partial": any(r.get("partial") for r in ok),
+    }
+
+
+@app.get("/api/sessions", dependencies=[Depends(require_auth)])
+def list_sessions():
+    rows = db.select("kernel_sessions", "*", order="last_run_time.desc.nullslast", limit=1000)
+    accounts = db.select(
+        "accounts", "id,name,sessions_checked_at,sessions_error,gpu_used,gpu_total,tpu_used,tpu_total,refresh_at"
+    )
+    accounts.sort(key=lambda a: a["name"].lower())
+    return {"now": db.iso(db.utcnow()), "accounts": accounts, "sessions": rows}
+
+
+@app.post("/api/sessions/refresh", dependencies=[Depends(require_auth)])
+async def refresh_sessions():
+    return await refresh_sessions_all()
 
 
 # ---------- frontend ----------

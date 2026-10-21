@@ -78,6 +78,10 @@ def _explain(r: httpx.Response) -> str:
             "(khóa công khai bị thu hồi quyền theo thiết kế); "
             "(2) chạy lại supabase/schema.sql, đặc biệt phần GRANT cho service_role"
         )
+    if code in ("42703", "PGRST204") or "column" in str(msg).lower() and (
+        "does not exist" in str(msg).lower() or "schema cache" in str(msg).lower()
+    ):
+        return "Thiếu cột trong database: hãy chạy lại toàn bộ supabase/schema.sql trong SQL Editor (file đã được cập nhật)"
     if code in ("PGRST205", "42P01") or "schema cache" in str(msg):
         return "Chưa có bảng: hãy chạy supabase/schema.sql trong SQL Editor của Supabase"
     return f"Supabase lỗi {r.status_code}: {str(msg)[:200]}"
@@ -129,6 +133,20 @@ def insert(table: str, row: dict) -> dict:
 
 def insert_quiet(table: str, row: dict) -> None:
     _req("POST", table, body=row, prefer="return=minimal")
+
+
+def upsert(table: str, rows: list[dict], on_conflict: str) -> None:
+    """Chèn hoặc cập nhật hàng loạt. Mọi hàng PHẢI có cùng tập khóa (PostgREST từ chối nếu khác nhau,
+    và nếu thiếu khóa thì cột đó bị ghi đè bằng NULL/mặc định)."""
+    if not rows:
+        return
+    keys = set(rows[0])
+    if any(set(r) != keys for r in rows):
+        raise ValueError("upsert: các hàng có tập khóa khác nhau")
+    _req(
+        "POST", table, params=[("on_conflict", on_conflict)], body=rows,
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
 
 
 def update(table: str, filters: dict, values: dict) -> list[dict]:

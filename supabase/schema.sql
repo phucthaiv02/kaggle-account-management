@@ -55,5 +55,47 @@ grant select, insert, update, delete
 grant usage, select
     on sequence public.accounts_id_seq, public.quota_snapshots_id_seq, public.login_fails_id_seq to service_role;
 
+-- ============ Theo dõi session (notebook run) ============
+-- Mỗi hàng = một phiên chạy (một phiên bản của một notebook) của một tài khoản Kaggle.
+alter table public.accounts add column if not exists sessions_checked_at timestamptz;
+alter table public.accounts add column if not exists sessions_error text;
+
+create table if not exists public.kernel_sessions (
+    id              bigserial primary key,
+    account_id      bigint not null references public.accounts(id) on delete cascade,
+    ref             text not null,                      -- owner/slug của notebook
+    version         integer not null default 0,         -- số phiên bản (mỗi lần chạy là một phiên bản)
+    title           text,
+    author          text,
+    status          text not null default 'unknown',    -- queued|running|complete|error|cancel_requested|cancel_acknowledged|new_script|unknown
+    failure_message text,
+    last_run_time   timestamptz,                        -- thời điểm chạy gần nhất do Kaggle báo (dùng làm mốc bắt đầu)
+    duration_seconds double precision,                  -- ước tính từ log; -1 = đã thử nhưng không xác định được
+    accelerator     text not null default 'cpu',        -- cpu | gpu | tpu
+    machine_shape   text,
+    docker_image    text,
+    enable_internet boolean,
+    is_private      boolean,
+    kernel_type     text,
+    language        text,
+    total_votes     integer,
+    competitions    jsonb not null default '[]'::jsonb, -- competition gắn qua data source
+    datasets        jsonb not null default '[]'::jsonb,
+    models          jsonb not null default '[]'::jsonb,
+    kernel_sources  jsonb not null default '[]'::jsonb,
+    first_seen_at   timestamptz not null default now(),
+    updated_at      timestamptz not null default now(),
+    status_changed_at timestamptz,
+    unique (account_id, ref, version)
+);
+create index if not exists idx_ks_acc_run on public.kernel_sessions(account_id, last_run_time desc);
+create index if not exists idx_ks_status on public.kernel_sessions(status);
+
+alter table public.kernel_sessions enable row level security;
+revoke all on public.kernel_sessions from anon, authenticated;
+revoke all on sequence public.kernel_sessions_id_seq from anon, authenticated;
+grant select, insert, update, delete on public.kernel_sessions to service_role;
+grant usage, select on sequence public.kernel_sessions_id_seq to service_role;
+
 -- Báo cho Data API nạp lại danh sách bảng
 notify pgrst, 'reload schema';

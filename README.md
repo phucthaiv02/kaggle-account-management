@@ -7,6 +7,7 @@ Trang web quản lý nhiều tài khoản Kaggle: lưu token đã mã hóa, xem 
 - Backend FastAPI chạy thành một Vercel Function. Với mỗi tài khoản, nó chạy `python -m kaggle quota --format json` trong một thư mục HOME tạm riêng, token truyền qua biến `KAGGLE_API_TOKEN` của tiến trình con, nên token không lẫn nhau và bí mật của ứng dụng không bị lộ cho tiến trình con.
 - Dữ liệu lưu ở Supabase qua Data API (REST) bằng `SUPABASE_URL` + khóa secret. Token Kaggle được mã hóa Fernet (khóa `SECRET_KEY`) trước khi ghi; trình duyệt không bao giờ nhận lại token và API danh sách không hề truy vấn cột token.
 - **Không có cron.** Quota được làm mới khi bạn bấm **Làm mới** (từng tài khoản) hoặc **Làm mới tất cả**. Nút "tất cả" xử lý từ tài khoản cũ nhất và dừng khi hết `REFRESH_BUDGET_SECONDS` (mặc định 50s); nếu còn sót, giao diện báo để bạn bấm lại.
+- **Trang Sessions** (`#/sessions`): theo dõi các lần chạy notebook của mọi tài khoản: đang chạy / đã xong / lỗi, tài khoản nào, GPU/TPU/CPU, thời gian đã chạy, challenge (competition) và dataset gắn kèm, link mở notebook, internet bật hay không, số vote, thông báo lỗi... Bấm **Làm mới** để thu thập; dữ liệu lưu ở bảng `kernel_sessions`.
 - Đăng nhập bằng một mật khẩu quản trị. Phiên là cookie có chữ ký (không lưu trên server), đổi `ADMIN_PASSWORD` sẽ đăng xuất mọi phiên.
 
 ## Triển khai
@@ -62,6 +63,9 @@ Mở http://localhost:8000. Chạy kiểm thử: `python -m pytest backend/tests
 ## Giới hạn và lưu ý
 
 - **`maxDuration`**: `vercel.json` đặt 60 giây cho function; `REFRESH_BUDGET_SECONDS` phải nhỏ hơn giá trị này. Nếu gói Vercel của bạn giới hạn thấp hơn, hạ cả hai và bấm "Làm mới tất cả" nhiều lần khi có nhiều tài khoản.
+- **Sessions: giới hạn của API Kaggle.** Kaggle không có API công khai liệt kê phiên tương tác (đang mở notebook để sửa). Trang này theo dõi các lần *chạy* (commit/run) của notebook thuộc tài khoản. Thời điểm bắt đầu lấy từ `lastRunTime`; thời gian đã chạy được ước tính từ mốc log cuối nên chỉ gần đúng, và có thể trống nếu log không đọc được. Lần chạy đã kết thúc và không đổi phiên bản sẽ không bị hỏi lại. Giới hạn mỗi lần quét chỉnh bằng `SESSIONS_*` (xem `.env.example`); quét dở vì hết giờ sẽ báo "một phần", bấm lại để tiếp tục.
+- **Cập nhật schema**: sau khi nâng cấp, chạy lại toàn bộ `supabase/schema.sql` trong SQL Editor (idempotent) để có bảng `kernel_sessions` và cột mới của `accounts`. Trang Tài khoản vẫn dùng được nếu chưa chạy, riêng trang Sessions sẽ báo 503 kèm hướng dẫn.
+- Giao diện chỉ còn nút **Làm mới tất cả** và **Xóa** trên mỗi tài khoản; các endpoint sửa tài khoản, làm mới từng tài khoản, notebook và lịch sử quota vẫn còn ở backend.
 - Mỗi lần làm mới ghi một snapshot; snapshot cũ hơn 90 ngày tự bị xóa.
 - Đăng nhập sai quá 5 lần/IP hoặc 30 lần tổng trong 15 phút sẽ bị khóa tạm thời.
 - "Đăng xuất" chỉ xóa cookie trên trình duyệt hiện tại; muốn hủy mọi phiên thì đổi `ADMIN_PASSWORD`.
@@ -81,3 +85,5 @@ Mở http://localhost:8000. Chạy kiểm thử: `python -m pytest backend/tests
 | POST | `/api/refresh-all` | Làm mới tất cả (có giới hạn thời gian) |
 | GET | `/api/accounts/{id}/history` | Lịch sử quota |
 | GET | `/api/accounts/{id}/kernels` | Notebook của tài khoản |
+| GET | `/api/sessions` | Các lần chạy notebook + trạng thái quét từng tài khoản |
+| POST | `/api/sessions/refresh` | Quét lại sessions (có giới hạn thời gian) |
