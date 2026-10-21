@@ -71,6 +71,7 @@
     <button id="btnLogout">Đăng xuất</button>
   </header>
   <main>
+    <div id="notice" class="hidden" style="margin-bottom:12px;font-size:14px"></div>
     <div id="summary" class="summary"></div>
     <div id="list" class="grid"></div>
     <div id="empty" class="empty hidden">Chưa có tài khoản nào. Bấm "Thêm tài khoản" để bắt đầu.</div>
@@ -135,9 +136,13 @@ $("#btnLogout").onclick = async () => { await api("/logout", { method: "POST" })
 function fmtH(v) { return v == null ? "–" : v.toFixed(2).replace(/\.?0+$/, "") + "h"; }
 function ago(ts) {
   if (!ts) return "chưa kiểm tra";
-  const d = new Date(ts.replace(" ", "T") + "Z"); const m = Math.round((Date.now() - d) / 60000);
+  const d = new Date(ts); const m = Math.round((Date.now() - d) / 60000);
   if (m < 1) return "vừa xong"; if (m < 60) return m + " phút trước";
   if (m < 1440) return Math.round(m / 60) + " giờ trước"; return Math.round(m / 1440) + " ngày trước";
+}
+function fmtTime(ts) {
+  if (!ts) return "";
+  return new Date(ts).toLocaleString("vi-VN", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 function meter(label, used, total, color) {
@@ -174,6 +179,7 @@ function render() {
     if (a.username) { const u = document.createElement("div"); u.className = "sub"; u.textContent = "@" + a.username; c.append(u); }
     if (a.note) { const n = document.createElement("div"); n.className = "sub"; n.textContent = a.note; c.append(n); }
     c.append(meter("GPU", q?.gpu_used, q?.gpu_total, "var(--gpu)"), meter("TPU", q?.tpu_used, q?.tpu_total, "var(--tpu)"));
+    if (q?.refresh_at) { const rs = document.createElement("div"); rs.className = "sub"; rs.style.marginTop = "10px"; rs.textContent = "Quota reset: " + fmtTime(q.refresh_at); c.append(rs); }
     if (a.last_error) { const e = document.createElement("div"); e.className = "err"; e.textContent = a.last_error; c.append(e); }
     const act = document.createElement("div"); act.className = "actions";
     act.append(
@@ -234,16 +240,29 @@ async function showKernels(a) {
 }
 async function showHistory(a) {
   const h = await api(`/accounts/${a.id}/history`);
-  const lines = h.slice(-40).reverse().map((r) => `${r.ts}  GPU ${fmtH(r.gpu_used)}/${fmtH(r.gpu_total)}  TPU ${fmtH(r.tpu_used)}/${fmtH(r.tpu_total)}`);
+  const lines = h.slice(-40).reverse().map((r) => `${fmtTime(r.ts)}  GPU ${fmtH(r.gpu_used)}/${fmtH(r.gpu_total)}  TPU ${fmtH(r.tpu_used)}/${fmtH(r.tpu_total)}`);
   info(`Lịch sử quota: ${a.name}`, lines.join("\n") || "(chưa có dữ liệu)");
 }
 
 $("#btnRefreshAll").onclick = async (ev) => {
-  ev.target.disabled = true; ev.target.textContent = "Đang làm mới…";
-  try { await api("/refresh-all", { method: "POST" }); } finally { ev.target.disabled = false; ev.target.textContent = "Làm mới tất cả"; await load(); }
+  const b = ev.target; b.disabled = true; b.textContent = "Đang làm mới…";
+  try {
+    const r = await api("/refresh-all", { method: "POST" });
+    await load();
+    const parts = [`Đã làm mới ${r.done}/${r.total} tài khoản`];
+    if (r.failed) parts.push(`${r.failed} lỗi (xem trên thẻ)`);
+    if (r.skipped) parts.push(`${r.skipped} chưa kịp xử lý, bấm lại để tiếp tục`);
+    notice(parts.join(" · "), r.failed || r.skipped);
+  } catch (e) { notice(e.message, true); }
+  finally { b.disabled = false; b.textContent = "Làm mới tất cả"; }
 };
 
-setInterval(() => { if (!$("#appView").classList.contains("hidden")) load(); }, 60000);
+let noticeTimer;
+function notice(text, warn) {
+  const n = $("#notice"); n.textContent = text; n.style.color = warn ? "var(--warn)" : "var(--ok)";
+  n.classList.remove("hidden"); clearTimeout(noticeTimer); noticeTimer = setTimeout(() => n.classList.add("hidden"), 8000);
+}
+
 load();
 </script>
 </body>

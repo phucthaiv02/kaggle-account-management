@@ -1,20 +1,38 @@
 """Gọi Kaggle CLI 2.x cho từng tài khoản, tách biệt hoàn toàn thông tin xác thực.
 
-Mỗi lần gọi dùng một thư mục HOME tạm riêng, nên không đọc nhầm token của máy chủ
-và không lẫn token giữa các tài khoản.
+- Chạy bằng `python -m kaggle` để không phụ thuộc PATH (quan trọng trên Vercel).
+- Mỗi lần gọi dùng một thư mục HOME tạm riêng, nên không đọc nhầm ~/.kaggle của máy
+  chủ và không lẫn token giữa các tài khoản.
+- Token chỉ truyền qua biến môi trường KAGGLE_API_TOKEN của tiến trình con.
+- Các bí mật của ứng dụng (DATABASE_URL, SECRET_KEY...) không được chuyển cho tiến trình con.
+
+Đầu ra của `kaggle quota --format json` (đã đối chiếu với mã nguồn kaggle 2.2.x):
+  [{"resource": "GPU", "used": "16.33h", "remaining": "13.67h",
+    "total": "30.00h", "refreshAt": "2026-10-24T00:00:00+00:00"}, {... "TPU" ...}]
 """
 import asyncio
+import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime
 
-KAGGLE_BIN = os.environ.get("KAGGLE_BIN", "kaggle")
-TIMEOUT = int(os.environ.get("KAGGLE_TIMEOUT", "60"))
-# Giới hạn số tiến trình kaggle chạy song song
-_sem = asyncio.Semaphore(int(os.environ.get("KAGGLE_CONCURRENCY", "3")))
+def _cmd() -> list[str]:
+    """Cho phép thay lệnh khi kiểm thử (KAGGLE_CMD). Mặc định: python -m kaggle."""
+    if os.environ.get("KAGGLE_CMD"):
+        return shlex.split(os.environ["KAGGLE_CMD"])
+    return [sys.executable, "-m", "kaggle"]
+
+
+DEFAULT_TIMEOUT = int(os.environ.get("KAGGLE_TIMEOUT", "30"))
+CONCURRENCY = int(os.environ.get("KAGGLE_CONCURRENCY", "3"))
+
+_SENSITIVE_ENV = {"DATABASE_URL", "SECRET_KEY", "ADMIN_PASSWORD", "SESSION_SECRET", "SUPABASE_SERVICE_ROLE_KEY"}
 
 
 class KaggleError(RuntimeError):
@@ -27,66 +45,98 @@ class Quota:
     gpu_total: float | None
     tpu_used: float | None
     tpu_total: float | None
+    refresh_at: datetime | None
     raw: str
 
 
-# Khớp các dòng dạng: "TPU 0.00h used, 20.00h remaining" (định dạng quan sát được
-# trong báo cáo thử nghiệm của Kaggle CLI 2.x). Nếu Kaggle đổi định dạng, chỉnh ở đây.
-_LINE = re.compile(
-    r"(GPU|TPU)\D{0,40}?([\d.]+)\s*h(?:ours?)?\s*used\D{0,40}?([\d.]+)\s*h(?:ours?)?\s*(?:remaining|left)",
-    re.IGNORECASE,
-)
+def _hours(s: str | None) -> float | None:
+    if s is None:
+        return None
+    m = re.search(r"[\d.]+", str(s))
+    return float(m.group()) if m else None
+
+
+def _extract_json_list(text: str):
+    """Lấy mảng JSON trong đầu ra; CLI có thể in thêm chữ hướng dẫn trước/sau."""
+    dec = json.JSONDecoder()
+    for m in re.finditer(r"\[", text):
+        try:
+            obj, _ = dec.raw_decode(text[m.start():])
+        except ValueError:
+            continue
+        if isinstance(obj, list) and obj and all(isinstance(x, dict) for x in obj):
+            return obj
+    return None
 
 
 def parse_quota(text: str) -> Quota:
-    found: dict[str, tuple[float, float]] = {}
-    for m in _LINE.finditer(text):
-        kind = m.group(1).upper()
-        used, remaining = float(m.group(2)), float(m.group(3))
-        found[kind] = (used, used + remaining)
-    if not found:
+    rows = _extract_json_list(text)
+    if not rows:
         raise KaggleError("Không đọc được quota từ đầu ra của `kaggle quota`: " + text.strip()[:300])
-    g = found.get("GPU", (None, None))
-    t = found.get("TPU", (None, None))
-    return Quota(g[0], g[1], t[0], t[1], text.strip())
+    by = {str(r.get("resource", "")).upper(): r for r in rows}
+    if not by.keys() & {"GPU", "TPU"}:
+        raise KaggleError("Đầu ra quota không có dòng GPU/TPU: " + text.strip()[:300])
+
+    def pair(kind: str):
+        r = by.get(kind)
+        return (_hours(r.get("used")), _hours(r.get("total"))) if r else (None, None)
+
+    refresh = None
+    for r in rows:
+        if r.get("refreshAt"):
+            try:
+                refresh = datetime.fromisoformat(str(r["refreshAt"]).replace("Z", "+00:00"))
+            except ValueError:
+                pass
+            break
+    g, t = pair("GPU"), pair("TPU")
+    return Quota(g[0], g[1], t[0], t[1], refresh, json.dumps(rows))
 
 
-def _run_sync(args: list[str], token: str, username: str | None) -> str:
+def _run_sync(args: list[str], token: str, username: str | None, timeout: float) -> str:
     home = tempfile.mkdtemp(prefix="kg_")
     try:
         env = {
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": home,
-            "KAGGLE_CONFIG_DIR": os.path.join(home, ".kaggle"),
-            "KAGGLE_API_TOKEN": token,  # access token kiểu mới
+            k: v for k, v in os.environ.items()
+            if k not in _SENSITIVE_ENV and not k.startswith("KAGGLE_")
         }
+        env.update(
+            HOME=home,
+            KAGGLE_CONFIG_DIR=os.path.join(home, ".kaggle"),
+            KAGGLE_API_TOKEN=token,  # access token kiểu mới
+        )
         if username:  # tương thích khóa API kiểu cũ (username + key)
             env["KAGGLE_USERNAME"] = username
             env["KAGGLE_KEY"] = token
         try:
             p = subprocess.run(
-                [KAGGLE_BIN, *args], env=env, capture_output=True, text=True, timeout=TIMEOUT
+                [*_cmd(), *args], env=env, capture_output=True, text=True, timeout=timeout
             )
         except FileNotFoundError as e:
-            raise KaggleError(f"Không tìm thấy lệnh '{KAGGLE_BIN}'. Cài bằng: pip install kaggle") from e
+            raise KaggleError("Không chạy được Kaggle CLI (đã cài package `kaggle` chưa?)") from e
         except subprocess.TimeoutExpired as e:
-            raise KaggleError(f"Kaggle CLI quá thời gian ({TIMEOUT}s)") from e
+            raise KaggleError(f"Kaggle CLI quá thời gian ({int(timeout)}s)") from e
         if p.returncode != 0:
-            msg = (p.stderr or p.stdout).strip() or f"exit {p.returncode}"
-            raise KaggleError(msg[:500])
+            lines = [l for l in (p.stderr or p.stdout).splitlines() if l.strip()]
+            msg = lines[-1].strip() if lines else f"exit {p.returncode}"  # dòng ngoại lệ cuối, bỏ traceback
+            raise KaggleError(msg[:400])
         return p.stdout
     finally:
         shutil.rmtree(home, ignore_errors=True)
 
 
-async def run_kaggle(args: list[str], token: str, username: str | None = None) -> str:
-    async with _sem:
-        return await asyncio.to_thread(_run_sync, args, token, username)
+async def run_kaggle(args, token, username=None, timeout: float | None = None, sem: asyncio.Semaphore | None = None) -> str:
+    t = timeout if timeout is not None else DEFAULT_TIMEOUT
+    if sem is None:
+        return await asyncio.to_thread(_run_sync, args, token, username, t)
+    async with sem:
+        return await asyncio.to_thread(_run_sync, args, token, username, t)
 
 
-async def fetch_quota(token: str, username: str | None = None) -> Quota:
-    return parse_quota(await run_kaggle(["quota"], token, username))
+async def fetch_quota(token, username=None, timeout=None, sem=None) -> Quota:
+    out = await run_kaggle(["quota", "--format", "json"], token, username, timeout, sem)
+    return parse_quota(out)
 
 
-async def list_kernels(token: str, username: str | None = None) -> str:
-    return await run_kaggle(["kernels", "list", "--mine", "--csv", "-p", "1"], token, username)
+async def list_kernels(token, username=None, timeout=None) -> str:
+    return await run_kaggle(["kernels", "list", "--mine", "--page-size", "20", "-v"], token, username, timeout)

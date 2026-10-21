@@ -9,3 +9,6 @@ venv/
 .kaggle/
 kaggle.json
 access_token
+
+.vercel/
+.env.local

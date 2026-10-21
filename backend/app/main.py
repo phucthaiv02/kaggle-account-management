@@ -1,49 +1,64 @@
-"""API quản lý nhiều tài khoản Kaggle."""
+"""API quản lý nhiều tài khoản Kaggle (chạy trên Vercel + Supabase)."""
 import asyncio
-import hmac
 import os
-import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import auth
 from . import kaggle_client as kc
 from .crypto import decrypt, encrypt
-from .db import get_db, init_db
+from .db import get_db
 
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
-REFRESH_MINUTES = int(os.environ.get("REFRESH_MINUTES", "30"))
 SESSION_TTL = 60 * 60 * 12
 COOKIE = "kam_session"
-FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+# Tổng thời gian tối đa cho một lần "làm mới" (giây); phải nhỏ hơn maxDuration trong vercel.json
+REFRESH_BUDGET = float(os.environ.get("REFRESH_BUDGET_SECONDS", "50"))
+PUBLIC_DIR = Path(__file__).resolve().parents[2] / "public"
+ON_VERCEL = bool(os.environ.get("VERCEL"))
 
-# Phiên đăng nhập lưu trong bộ nhớ (đủ cho 1 tiến trình / 1 quản trị viên)
-_sessions: dict[str, float] = {}
-_login_fails: dict[str, list[float]] = {}
+LOGIN_MAX_PER_IP = 5
+LOGIN_MAX_GLOBAL = 30
+LOGIN_WINDOW_MIN = 15
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    missing = [k for k in ("DATABASE_URL", "SECRET_KEY", "ADMIN_PASSWORD") if not os.environ.get(k)]
+    if missing:
+        raise RuntimeError("Thiếu biến môi trường: " + ", ".join(missing))
+    from .crypto import _fernet
+
+    _fernet()  # báo lỗi sớm nếu SECRET_KEY sai định dạng
+    yield
+
+
+app = FastAPI(title="Kaggle Account Management", lifespan=lifespan)
 
 
 # ---------- tiện ích ----------
-def _now_sql(db) -> str:
-    return db.execute("SELECT datetime('now')").fetchone()[0]
-
-
 def require_auth(request: Request) -> None:
-    sid = request.cookies.get(COOKIE)
-    exp = _sessions.get(sid or "")
-    if not exp or exp < time.time():
-        _sessions.pop(sid or "", None)
+    if not auth.verify_session(request.cookies.get(COOKIE)):
         raise HTTPException(401, "Chưa đăng nhập")
+
+
+def client_ip(request: Request) -> str:
+    # Trên Vercel, x-forwarded-for do hạ tầng đặt; cục bộ lấy địa chỉ kết nối trực tiếp.
+    fwd = request.headers.get("x-forwarded-for", "")
+    if ON_VERCEL and fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "?"
 
 
 def _account_row(db, row) -> dict:
     snap = db.execute(
-        "SELECT ts, gpu_used, gpu_total, tpu_used, tpu_total FROM quota_snapshots "
-        "WHERE account_id=? ORDER BY id DESC LIMIT 1",
+        "SELECT ts, gpu_used, gpu_total, tpu_used, tpu_total, refresh_at FROM quota_snapshots "
+        "WHERE account_id=%s ORDER BY id DESC LIMIT 1",
         (row["id"],),
     ).fetchone()
     return {
@@ -54,69 +69,55 @@ def _account_row(db, row) -> dict:
         "created_at": row["created_at"],
         "last_checked": row["last_checked"],
         "last_error": row["last_error"],
-        "quota": dict(snap) if snap else None,
+        "quota": snap,
     }
 
 
-async def refresh_account(account_id: int) -> dict:
-    """Gọi `kaggle quota` cho một tài khoản và lưu snapshot."""
+async def refresh_account(account_id: int, budget_end: float | None = None, sem: asyncio.Semaphore | None = None) -> dict:
+    """Chạy `kaggle quota` cho một tài khoản và lưu snapshot."""
     with get_db() as db:
-        row = db.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+        row = db.execute("SELECT * FROM accounts WHERE id=%s", (account_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Không có tài khoản")
+    timeout = kc.DEFAULT_TIMEOUT
+    if budget_end is not None:
+        timeout = min(timeout, budget_end - time.monotonic())
+        if timeout < 3:
+            return {"ok": False, "skipped": True}
     try:
         token = decrypt(row["token_enc"])
-        q = await kc.fetch_quota(token, row["username"])
+        q = await kc.fetch_quota(token, row["username"], timeout, sem)
     except (kc.KaggleError, RuntimeError) as e:
         with get_db() as db:
             db.execute(
-                "UPDATE accounts SET last_checked=datetime('now'), last_error=? WHERE id=?",
+                "UPDATE accounts SET last_checked=now(), last_error=%s WHERE id=%s",
                 (str(e), account_id),
             )
         return {"ok": False, "error": str(e)}
     with get_db() as db:
         db.execute(
-            "INSERT INTO quota_snapshots(account_id,gpu_used,gpu_total,tpu_used,tpu_total,raw) "
-            "VALUES (?,?,?,?,?,?)",
-            (account_id, q.gpu_used, q.gpu_total, q.tpu_used, q.tpu_total, q.raw),
+            "INSERT INTO quota_snapshots(account_id,gpu_used,gpu_total,tpu_used,tpu_total,refresh_at,raw) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (account_id, q.gpu_used, q.gpu_total, q.tpu_used, q.tpu_total, q.refresh_at, q.raw),
         )
-        db.execute(
-            "UPDATE accounts SET last_checked=datetime('now'), last_error=NULL WHERE id=?",
-            (account_id,),
-        )
+        db.execute("UPDATE accounts SET last_checked=now(), last_error=NULL WHERE id=%s", (account_id,))
+        db.execute("DELETE FROM quota_snapshots WHERE account_id=%s AND ts < now() - interval '90 days'", (account_id,))
     return {"ok": True}
 
 
-async def refresh_all() -> list[dict]:
+async def refresh_all() -> dict:
+    """Làm mới lần lượt từ tài khoản cũ nhất, dừng khi hết ngân sách thời gian."""
     with get_db() as db:
-        ids = [r["id"] for r in db.execute("SELECT id FROM accounts")]
-    results = await asyncio.gather(*(refresh_account(i) for i in ids), return_exceptions=True)
-    return [r if isinstance(r, dict) else {"ok": False, "error": str(r)} for r in results]
-
-
-async def _background_loop():
-    while True:
-        await asyncio.sleep(REFRESH_MINUTES * 60)
-        try:
-            await refresh_all()
-        except Exception as e:  # không để job nền chết
-            print("refresh_all lỗi:", e)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    if not ADMIN_PASSWORD:
-        raise RuntimeError("Thiếu ADMIN_PASSWORD")
-    from .crypto import _fernet
-
-    _fernet()  # báo lỗi sớm nếu thiếu SECRET_KEY
-    init_db()
-    task = asyncio.create_task(_background_loop())
-    yield
-    task.cancel()
-
-
-app = FastAPI(title="Kaggle Account Management", lifespan=lifespan)
+        ids = [r["id"] for r in db.execute("SELECT id FROM accounts ORDER BY last_checked ASC NULLS FIRST, id")]
+    budget_end = time.monotonic() + REFRESH_BUDGET
+    sem = asyncio.Semaphore(kc.CONCURRENCY)
+    results = await asyncio.gather(
+        *(refresh_account(i, budget_end, sem) for i in ids), return_exceptions=True
+    )
+    done = sum(1 for r in results if isinstance(r, dict) and r.get("ok"))
+    skipped = sum(1 for r in results if isinstance(r, dict) and r.get("skipped"))
+    failed = len(results) - done - skipped
+    return {"total": len(ids), "done": done, "failed": failed, "skipped": skipped}
 
 
 # ---------- schema ----------
@@ -139,60 +140,66 @@ class AccountPatch(BaseModel):
 
 
 # ---------- đăng nhập ----------
+@app.get("/api/health")
+def health():
+    try:
+        with get_db() as db:
+            db.execute("SELECT 1")
+        return {"ok": True}
+    except Exception:
+        raise HTTPException(503, "Không kết nối được database")
+
+
 @app.post("/api/login")
 def login(body: LoginIn, request: Request, response: Response):
-    ip = request.client.host if request.client else "?"
-    now = time.time()
-    fails = [t for t in _login_fails.get(ip, []) if now - t < 900]
-    if len(fails) >= 5:
-        raise HTTPException(429, "Sai quá nhiều lần, thử lại sau 15 phút")
-    if not hmac.compare_digest(body.password.encode(), ADMIN_PASSWORD.encode()):
-        fails.append(now)
-        _login_fails[ip] = fails
-        raise HTTPException(401, "Sai mật khẩu")
-    _login_fails.pop(ip, None)
-    sid = secrets.token_urlsafe(32)
-    _sessions[sid] = now + SESSION_TTL
+    ip = client_ip(request)
+    with get_db() as db:
+        db.execute("DELETE FROM login_fails WHERE ts < now() - interval '1 day'")
+        win = f"{LOGIN_WINDOW_MIN} minutes"
+        per_ip = db.execute(
+            "SELECT count(*) AS n FROM login_fails WHERE ip=%s AND ts > now() - %s::interval", (ip, win)
+        ).fetchone()["n"]
+        total = db.execute(
+            "SELECT count(*) AS n FROM login_fails WHERE ts > now() - %s::interval", (win,)
+        ).fetchone()["n"]
+        if per_ip >= LOGIN_MAX_PER_IP or total >= LOGIN_MAX_GLOBAL:
+            raise HTTPException(429, f"Sai quá nhiều lần, thử lại sau {LOGIN_WINDOW_MIN} phút")
+        if not auth.check_password(body.password):
+            db.execute("INSERT INTO login_fails(ip) VALUES (%s)", (ip,))
+            db.commit()  # giữ lại bản ghi dù trả lỗi
+            raise HTTPException(401, "Sai mật khẩu")
+        db.execute("DELETE FROM login_fails WHERE ip=%s", (ip,))
     response.set_cookie(
-        COOKIE, sid, max_age=SESSION_TTL, httponly=True, samesite="strict",
-        secure=os.environ.get("COOKIE_SECURE", "0") == "1",
+        COOKIE, auth.make_session(SESSION_TTL), max_age=SESSION_TTL, httponly=True,
+        samesite="strict", secure=ON_VERCEL or os.environ.get("COOKIE_SECURE", "0") == "1",
     )
     return {"ok": True}
 
 
 @app.post("/api/logout")
-def logout(request: Request, response: Response):
-    _sessions.pop(request.cookies.get(COOKIE, ""), None)
+def logout(response: Response):
     response.delete_cookie(COOKIE)
     return {"ok": True}
-
-
-@app.get("/api/me", dependencies=[Depends(require_auth)])
-def me():
-    return {"ok": True, "refresh_minutes": REFRESH_MINUTES}
 
 
 # ---------- tài khoản ----------
 @app.get("/api/accounts", dependencies=[Depends(require_auth)])
 def list_accounts():
     with get_db() as db:
-        rows = db.execute("SELECT * FROM accounts ORDER BY name COLLATE NOCASE").fetchall()
+        rows = db.execute("SELECT * FROM accounts ORDER BY lower(name)").fetchall()
         return [_account_row(db, r) for r in rows]
 
 
 @app.post("/api/accounts", status_code=201, dependencies=[Depends(require_auth)])
 async def add_account(body: AccountIn):
-    with get_db() as db:
-        try:
-            cur = db.execute(
-                "INSERT INTO accounts(name, username, token_enc, note) VALUES (?,?,?,?)",
+    try:
+        with get_db() as db:
+            new_id = db.execute(
+                "INSERT INTO accounts(name, username, token_enc, note) VALUES (%s,%s,%s,%s) RETURNING id",
                 (body.name.strip(), (body.username or "").strip() or None, encrypt(body.token.strip()), body.note),
-            )
-        except Exception as e:
-            if "UNIQUE" in str(e):
-                raise HTTPException(409, "Tên tài khoản đã tồn tại")
-            raise
-        new_id = cur.lastrowid
+            ).fetchone()["id"]
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(409, "Tên tài khoản đã tồn tại")
     result = await refresh_account(new_id)  # kiểm tra token ngay
     return {"id": new_id, "check": result}
 
@@ -201,17 +208,17 @@ async def add_account(body: AccountIn):
 async def update_account(account_id: int, body: AccountPatch):
     sets, vals = [], []
     if body.name is not None:
-        sets.append("name=?"); vals.append(body.name.strip())
+        sets.append("name=%s"); vals.append(body.name.strip())
     if body.username is not None:
-        sets.append("username=?"); vals.append(body.username.strip() or None)
+        sets.append("username=%s"); vals.append(body.username.strip() or None)
     if body.note is not None:
-        sets.append("note=?"); vals.append(body.note)
+        sets.append("note=%s"); vals.append(body.note)
     if body.token is not None:
-        sets.append("token_enc=?"); vals.append(encrypt(body.token.strip()))
+        sets.append("token_enc=%s"); vals.append(encrypt(body.token.strip()))
     if not sets:
         return {"ok": True}
     with get_db() as db:
-        cur = db.execute(f"UPDATE accounts SET {', '.join(sets)} WHERE id=?", (*vals, account_id))
+        cur = db.execute(f"UPDATE accounts SET {', '.join(sets)} WHERE id=%s", (*vals, account_id))
         if cur.rowcount == 0:
             raise HTTPException(404, "Không có tài khoản")
     if body.token is not None:
@@ -222,7 +229,7 @@ async def update_account(account_id: int, body: AccountPatch):
 @app.delete("/api/accounts/{account_id}", status_code=204, dependencies=[Depends(require_auth)])
 def delete_account(account_id: int):
     with get_db() as db:
-        cur = db.execute("DELETE FROM accounts WHERE id=?", (account_id,))
+        cur = db.execute("DELETE FROM accounts WHERE id=%s", (account_id,))
         if cur.rowcount == 0:
             raise HTTPException(404, "Không có tài khoản")
 
@@ -241,17 +248,17 @@ async def refresh_everything():
 def history(account_id: int, limit: int = 200):
     with get_db() as db:
         rows = db.execute(
-            "SELECT ts, gpu_used, gpu_total, tpu_used, tpu_total FROM quota_snapshots "
-            "WHERE account_id=? ORDER BY id DESC LIMIT ?",
+            "SELECT ts, gpu_used, gpu_total, tpu_used, tpu_total, refresh_at FROM quota_snapshots "
+            "WHERE account_id=%s ORDER BY id DESC LIMIT %s",
             (account_id, min(max(limit, 1), 1000)),
         ).fetchall()
-    return [dict(r) for r in reversed(rows)]
+    return list(reversed(rows))
 
 
 @app.get("/api/accounts/{account_id}/kernels", dependencies=[Depends(require_auth)])
 async def kernels(account_id: int):
     with get_db() as db:
-        row = db.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+        row = db.execute("SELECT * FROM accounts WHERE id=%s", (account_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Không có tài khoản")
     try:
@@ -262,9 +269,10 @@ async def kernels(account_id: int):
 
 
 # ---------- frontend ----------
-if FRONTEND_DIR.exists():
-    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
-
-    @app.get("/")
-    def index():
-        return FileResponse(FRONTEND_DIR / "index.html")
+# Trên Vercel, thư mục public/ được phục vụ từ CDN. Route này để chạy cục bộ.
+@app.get("/", include_in_schema=False)
+def index():
+    f = PUBLIC_DIR / "index.html"
+    if not f.exists():
+        raise HTTPException(404, "Không tìm thấy public/index.html")
+    return FileResponse(f)
