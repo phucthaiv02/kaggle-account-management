@@ -1,11 +1,11 @@
 [project]
 name = "kaggle-account-management"
-version = "0.2.0"
-description = "Quản lý nhiều tài khoản Kaggle: theo dõi quota GPU/TPU (FastAPI + Supabase, chạy trên Vercel)"
+version = "0.3.0"
+description = "Quản lý nhiều tài khoản Kaggle: theo dõi quota GPU/TPU (FastAPI + Supabase Data API, chạy trên Vercel)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",
-    "psycopg[binary]>=3.1",
+    "httpx>=0.27",
     "cryptography>=42",
     "kaggle>=2.0",
 ]

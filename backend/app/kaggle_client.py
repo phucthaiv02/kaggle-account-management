@@ -4,7 +4,7 @@
 - Mỗi lần gọi dùng một thư mục HOME tạm riêng, nên không đọc nhầm ~/.kaggle của máy
   chủ và không lẫn token giữa các tài khoản.
 - Token chỉ truyền qua biến môi trường KAGGLE_API_TOKEN của tiến trình con.
-- Các bí mật của ứng dụng (DATABASE_URL, SECRET_KEY...) không được chuyển cho tiến trình con.
+- Các bí mật của ứng dụng (SUPABASE_SECRET_KEY, SECRET_KEY...) không được chuyển cho tiến trình con.
 
 Đầu ra của `kaggle quota --format json` (đã đối chiếu với mã nguồn kaggle 2.2.x):
   [{"resource": "GPU", "used": "16.33h", "remaining": "13.67h",
@@ -32,7 +32,7 @@ def _cmd() -> list[str]:
 DEFAULT_TIMEOUT = int(os.environ.get("KAGGLE_TIMEOUT", "30"))
 CONCURRENCY = int(os.environ.get("KAGGLE_CONCURRENCY", "3"))
 
-_SENSITIVE_ENV = {"DATABASE_URL", "SECRET_KEY", "ADMIN_PASSWORD", "SESSION_SECRET", "SUPABASE_SERVICE_ROLE_KEY"}
+_SENSITIVE_ENV = {"SECRET_KEY", "ADMIN_PASSWORD", "SESSION_SECRET", "SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY", "DATABASE_URL"}
 
 
 class KaggleError(RuntimeError):
