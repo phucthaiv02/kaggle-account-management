@@ -71,7 +71,7 @@ create table if not exists public.kernel_sessions (
     failure_message text,
     last_run_time   timestamptz,                        -- thời điểm chạy gần nhất do Kaggle báo (dùng làm mốc bắt đầu)
     duration_seconds double precision,                  -- ước tính từ log; -1 = đã thử nhưng không xác định được
-    accelerator     text not null default 'cpu',        -- cpu | gpu | tpu
+    accelerator     text not null default 'cpu',        -- cpu | gpu | tpu | unknown (chưa xác minh)
     machine_shape   text,
     docker_image    text,
     enable_internet boolean,
@@ -88,6 +88,8 @@ create table if not exists public.kernel_sessions (
     status_changed_at timestamptz,
     unique (account_id, ref, version)
 );
+-- true = loại máy (cpu/gpu/tpu) đã được xác minh bằng metadata của đúng phiên bản
+alter table public.kernel_sessions add column if not exists accelerator_checked boolean not null default false;
 create index if not exists idx_ks_acc_run on public.kernel_sessions(account_id, last_run_time desc);
 create index if not exists idx_ks_status on public.kernel_sessions(status);
 

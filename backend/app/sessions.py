@@ -7,13 +7,14 @@ ACTIVE = {"queued", "running"}
 # Mọi hàng gửi lên PostgREST phải có đúng tập khóa này (xem db.upsert)
 ROW_KEYS = (
     "account_id", "ref", "version", "title", "author", "status", "failure_message", "last_run_time",
-    "duration_seconds", "accelerator", "machine_shape", "docker_image", "enable_internet", "is_private",
+    "duration_seconds", "accelerator", "accelerator_checked", "machine_shape", "docker_image", "enable_internet", "is_private",
     "kernel_type", "language", "total_votes", "competitions", "datasets", "models", "kernel_sources",
     "first_seen_at", "updated_at", "status_changed_at",
 )
 
 
-def probe_opts(known_rows: list[dict], limit: int, status_limit: int, duration_budget: int, deadline: float) -> dict:
+def probe_opts(known_rows: list[dict], limit: int, status_limit: int, duration_budget: int, deadline: float,
+               accel_budget: int = 8) -> dict:
     """Tùy chọn gửi cho kaggle_probe, kèm hàng mới nhất đã biết của từng notebook để khỏi hỏi lại."""
     latest: dict[str, dict] = {}
     for r in known_rows:
@@ -21,12 +22,13 @@ def probe_opts(known_rows: list[dict], limit: int, status_limit: int, duration_b
         if cur is None or r["version"] > cur["version"]:
             latest[r["ref"]] = r
     known = {
-        ref: {k: r.get(k) for k in ("version", "last_run_time", "status", "failure_message", "duration_seconds")}
+        ref: {k: r.get(k) for k in ("version", "last_run_time", "status", "failure_message", "duration_seconds",
+                              "accelerator", "accelerator_checked", "machine_shape")}
         for ref, r in latest.items()
     }
     return {
         "limit": limit, "status_limit": status_limit, "duration_budget": duration_budget,
-        "deadline_seconds": deadline, "known": known,
+        "deadline_seconds": deadline, "accel_budget": accel_budget, "known": known,
     }
 
 
@@ -43,6 +45,7 @@ def _row(account_id: int, it: dict, p: dict | None, now: str) -> dict:
         "account_id": account_id, "ref": it["ref"], "version": it["version"], "title": it["title"],
         "author": it["author"], "status": status, "failure_message": failure,
         "last_run_time": it["last_run_time"], "duration_seconds": dur, "accelerator": it["accelerator"],
+        "accelerator_checked": bool(it.get("accelerator_checked")),
         "machine_shape": it["machine_shape"], "docker_image": it["docker_image"],
         "enable_internet": it["enable_internet"], "is_private": it["is_private"],
         "kernel_type": it["kernel_type"], "language": it["language"], "total_votes": it["total_votes"],

@@ -15,7 +15,7 @@ from .helpers import add, login
 def item(ref="me/nb1", version=1, status="complete", **kw):
     base = {
         "ref": ref, "version": version, "title": "Notebook 1", "author": ref.split("/")[0],
-        "last_run_time": "2026-10-21T01:00:00+00:00", "accelerator": "cpu", "machine_shape": "",
+        "last_run_time": "2026-10-21T01:00:00+00:00", "accelerator": "cpu", "machine_shape": "", "accelerator_checked": True,
         "docker_image": "", "enable_internet": False, "is_private": True, "kernel_type": "notebook",
         "language": "python", "total_votes": 0, "competitions": [], "datasets": [], "models": [],
         "kernel_sources": [], "status": status, "failure_message": None, "duration_seconds": None,
@@ -286,7 +286,7 @@ def test_collect_maps_metadata_and_accelerators():
          meta("me/d", shape="NvidiaTeslaP100")],
         {r: ("RUNNING",) for r in ("me/a", "me/b", "me/c", "me/d")},
     )
-    out = kaggle_probe.collect(api, {"limit": 500})
+    out = kaggle_probe.collect(api, {"limit": 500}, meta_fn=lambda a, r, v: meta(r))  # xác minh: me/c đúng là CPU
     assert api.list_kw["page_size"] == 100 and api.list_kw["mine"] and api.list_kw["sort_by"] == "dateRun"
     acc = {i["ref"]: i["accelerator"] for i in out["items"]}
     assert acc == {"me/a": "gpu", "me/b": "tpu", "me/c": "cpu", "me/d": "gpu"}  # d: suy ra GPU từ machine_shape
@@ -415,3 +415,41 @@ def test_fetch_sessions_ignores_noise_and_rejects_garbage(tmp_path, monkeypatch)
     monkeypatch.setenv("KAGGLE_PROBE_CMD", f"{sys.executable} {bad}")
     with pytest.raises(kc.KaggleError):
         asyncio.run(kc.fetch_sessions("tok-12345678", None, {}, 10))
+
+
+def test_collect_does_not_trust_cpu_from_list_and_verifies_per_version():
+    # Danh sách báo "không GPU" cho me/a nhưng metadata của phiên bản thì có GPU (đúng lỗi người dùng gặp)
+    api = FakeApi([meta("me/a", version=3), meta("me/b", version=1)], {"me/a": ("RUNNING",), "me/b": ("COMPLETE",)})
+    calls = []
+
+    def meta_fn(_api, ref, version):
+        calls.append((ref, version))
+        return meta(ref, gpu=ref == "me/a", shape="NvidiaTeslaT4" if ref == "me/a" else "")
+
+    out = kaggle_probe.collect(api, {}, meta_fn=meta_fn)
+    a, b = out["items"]
+    assert calls == [("me/a", 3), ("me/b", 1)]
+    assert (a["accelerator"], a["machine_shape"], a["accelerator_checked"]) == ("gpu", "NvidiaTeslaT4", True)
+    assert (b["accelerator"], b["accelerator_checked"]) == ("cpu", True)  # CPU chỉ khi đã xác minh
+
+
+def test_collect_unverified_is_unknown_not_cpu_and_budgeted():
+    api = FakeApi([meta(f"me/{i}") for i in range(3)], {f"me/{i}": ("COMPLETE",) for i in range(3)})
+
+    def boom(_api, ref, version):
+        raise RuntimeError("403")
+
+    out = kaggle_probe.collect(api, {}, meta_fn=boom)
+    assert [i["accelerator"] for i in out["items"]] == ["unknown"] * 3
+    seen = []
+    out = kaggle_probe.collect(api, {"accel_budget": 1}, meta_fn=lambda a, r, v: seen.append(r) or meta(r))
+    assert seen == ["me/0"] and [i["accelerator"] for i in out["items"]] == ["cpu", "unknown", "unknown"]
+    assert out["partial"] is True
+
+
+def test_collect_reuses_verified_accelerator_for_same_version():
+    api = FakeApi([meta("me/a", version=2)], {"me/a": ("COMPLETE",)})
+    known = {"me/a": {"version": 2, "status": "running", "accelerator": "gpu", "accelerator_checked": True,
+                      "machine_shape": "NvidiaTeslaT4", "last_run_time": None}}
+    out = kaggle_probe.collect(api, {"known": known}, meta_fn=lambda *a: pytest.fail("không được hỏi lại"))
+    assert out["items"][0]["accelerator"] == "gpu" and out["items"][0]["machine_shape"] == "NvidiaTeslaT4"

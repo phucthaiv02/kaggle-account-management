@@ -160,6 +160,7 @@
           <option value="gpu">GPU</option>
           <option value="tpu">TPU</option>
           <option value="cpu">CPU</option>
+          <option value="unknown">Chưa rõ</option>
         </select>
         <label class="chk"><input type="checkbox" id="fComp"> Chỉ gắn competition</label>
         <input type="search" id="fSearch" placeholder="Tìm notebook, competition…" aria-label="Tìm kiếm">
@@ -369,7 +370,7 @@ function machineLabel(s) {
     const k = ["T4", "P100", "L4", "A100", "H100"].find((x) => new RegExp(x, "i").test(shape));
     return "GPU" + (k ? " " + k : "") + (/x\s?2|2x|dual/i.test(shape) ? " ×2" : "");
   }
-  return "CPU";
+  return s.accelerator === "unknown" ? "Chưa rõ" : "CPU";
 }
 const limitHours = (s) => (s.accelerator === "tpu" ? 9 : 12);
 

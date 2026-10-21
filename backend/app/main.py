@@ -30,6 +30,7 @@ SESSIONS_LIMIT = int(os.environ.get("SESSIONS_LIMIT", "30"))
 SESSIONS_STATUS_LIMIT = int(os.environ.get("SESSIONS_STATUS_LIMIT", "20"))
 SESSIONS_DURATION_BUDGET = int(os.environ.get("SESSIONS_DURATION_BUDGET", "3"))
 SESSIONS_TIMEOUT = float(os.environ.get("SESSIONS_TIMEOUT", "40"))
+SESSIONS_ACCEL_BUDGET = int(os.environ.get("SESSIONS_ACCEL_BUDGET", "8"))
 
 # Không bao giờ lấy token_enc khi trả danh sách ra giao diện
 ACC_COLS = "id,name,username,note,created_at,last_checked,last_error,gpu_used,gpu_total,tpu_used,tpu_total,refresh_at"
@@ -297,7 +298,8 @@ async def refresh_sessions_account(acc: dict, budget_end: float, sem: asyncio.Se
         db.select, "kernel_sessions", "*", {"account_id": eq(acc["id"])}, None, 2000
     )
     opts = sessions.probe_opts(
-        known, SESSIONS_LIMIT, SESSIONS_STATUS_LIMIT, SESSIONS_DURATION_BUDGET, max(5.0, timeout - 8)
+        known, SESSIONS_LIMIT, SESSIONS_STATUS_LIMIT, SESSIONS_DURATION_BUDGET, max(5.0, timeout - 8),
+        SESSIONS_ACCEL_BUDGET,
     )
     try:
         res = await kc.fetch_sessions(decrypt(acc["token_enc"]), acc["username"], opts, timeout, sem)
