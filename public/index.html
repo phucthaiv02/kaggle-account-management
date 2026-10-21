@@ -98,6 +98,10 @@
   .kv .k { font-size: 12px; color: var(--muted); }
   .kv .v { font-size: 13px; word-break: break-word; }
   .footnote { margin-top: 14px; line-height: 1.5; }
+  .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; padding: 10px 2px; font-size: 13px; color: var(--muted); }
+  .pager button { padding: 4px 10px; font-size: 13px; }
+  .pager select { padding: 4px 8px; font-size: 13px; }
+  .pager .sp { flex: 1; }
   .h2 { font-size: 16px; margin: 22px 0 10px; }
   .st-pending { color: var(--warn); background: rgba(217,138,0,.14); }
   .st-pending::before { animation: pulse 1.4s infinite; }
@@ -185,6 +189,7 @@
           <tbody id="sBody"></tbody>
         </table>
       </div>
+      <div id="sPager" class="pager"></div>
       <div id="sEmpty" class="empty hidden"></div>
       <div class="sub footnote">
         Kaggle không công khai danh sách các phiên tương tác (interactive session) đang mở trong trình soạn thảo.
@@ -209,6 +214,7 @@
           <tbody id="uCompBody"></tbody>
         </table>
       </div>
+      <div id="uCompPager" class="pager"></div>
       <div id="uCompEmpty" class="empty hidden"></div>
 
       <h2 class="h2">Danh sách submission</h2>
@@ -233,6 +239,7 @@
           <tbody id="uBody"></tbody>
         </table>
       </div>
+      <div id="uPager" class="pager"></div>
       <div id="uEmpty" class="empty hidden"></div>
       <div class="sub footnote">
         Chỉ lấy các competition tài khoản đã tham gia và <b>còn hạn</b> (đang diễn ra hoặc đang chờ chấm), tối đa 20 competition
@@ -323,6 +330,34 @@ function notice(sel, text, warn) {
 
 // Liên kết an toàn: chỉ dựng URL từ slug đã kiểm tra, luôn mở tab mới
 const PAIR = /^([\w.-]+)\/([\w.-]+)$/, SLUG = /^[A-Za-z0-9][\w.-]*$/;
+// ---------- phân trang (ở phía trình duyệt) ----------
+const PAGE_SIZES = [10, 25, 50, 100];
+function loadPageSize() { try { const n = +localStorage.getItem("kam_page_size"); return PAGE_SIZES.includes(n) ? n : 25; } catch { return 25; } }
+const pg = { size: loadPageSize(), sessions: 1, comps: 1, subs: 1 };
+// Trả về lát cắt của list cho trang hiện tại và vẽ thanh phân trang vào `box`; `key` là tên trang trong pg.
+function paginate(list, key, box, rerender) {
+  const pages = Math.max(1, Math.ceil(list.length / pg.size));
+  pg[key] = Math.min(Math.max(1, pg[key]), pages);
+  const start = (pg[key] - 1) * pg.size, slice = list.slice(start, start + pg.size);
+  box.replaceChildren();
+  if (list.length <= PAGE_SIZES[0]) return slice;  // ít hơn một trang nhỏ nhất: không cần thanh phân trang
+  const go = (n) => { pg[key] = n; rerender(); };
+  const btn = (label, n, off) => { const b = el("button", "", label); b.disabled = off; b.onclick = () => go(n); return b; };
+  const sel = el("select"); sel.setAttribute("aria-label", "Số dòng mỗi trang");
+  PAGE_SIZES.forEach((n) => sel.append(new Option(n + " dòng/trang", String(n))));
+  sel.value = String(pg.size);
+  sel.onchange = () => {
+    pg.size = +sel.value; pg.sessions = pg.comps = pg.subs = 1;
+    try { localStorage.setItem("kam_page_size", String(pg.size)); } catch {}
+    rerender();
+  };
+  box.append(el("span", "", `${start + 1}–${start + slice.length} / ${list.length}`), el("span", "sp"), sel,
+    btn("«", 1, pg[key] === 1), btn("‹", pg[key] - 1, pg[key] === 1),
+    el("span", "", `Trang ${pg[key]}/${pages}`),
+    btn("›", pg[key] + 1, pg[key] === pages), btn("»", pages, pg[key] === pages));
+  return slice;
+}
+
 function kernelUrl(ref) { const m = PAIR.exec(ref || ""); return m ? `https://www.kaggle.com/code/${m[1]}/${m[2]}` : null; }
 function datasetUrl(ref) { const m = PAIR.exec(ref || ""); return m ? `https://www.kaggle.com/datasets/${m[1]}/${m[2]}` : null; }
 function competitionSlug(s) { return String(s || "").replace(/^.*\/competitions\//, "").replace(/^competitions\//, ""); }
@@ -563,7 +598,7 @@ function renderAccStrip(nowMs) {
     const left = a.gpu_total != null ? Math.max(a.gpu_total - (a.gpu_used || 0), 0) : null;
     box.append(el("div", "sub", `GPU còn ${fmtH(left)} · cập nhật ${ago(a.sessions_checked_at, "chưa lấy")}`));
     if (a.sessions_error) box.append(el("div", "err", a.sessions_error));
-    box.onclick = () => { sf.account = sf.account === String(a.id) ? "all" : String(a.id); $("#fAccount").value = sf.account; renderSessions(); };
+    box.onclick = () => { sf.account = sf.account === String(a.id) ? "all" : String(a.id); $("#fAccount").value = sf.account; pg.sessions = 1; renderSessions(); };
     strip.append(box);
   }
 }
@@ -572,7 +607,9 @@ function renderSessions() {
   const nowMs = Date.now(), list = filtered();
   renderChips(list, nowMs); renderAccStrip(nowMs);
   const body = $("#sBody"); body.replaceChildren();
-  for (const s of list) { body.append(renderSessionRow(s, nowMs)); if (expanded.has(s.id)) body.append(renderDetail(s)); }
+  for (const s of paginate(list, "sessions", $("#sPager"), renderSessions)) {
+    body.append(renderSessionRow(s, nowMs)); if (expanded.has(s.id)) body.append(renderDetail(s));
+  }
   $("#sCount").textContent = `${list.length}/${sdata.sessions.length} session`;
   const empty = $("#sEmpty");
   empty.classList.toggle("hidden", list.length > 0);
@@ -612,11 +649,11 @@ $("#btnRefreshSes").onclick = async (ev) => {
   finally { b.disabled = false; b.textContent = "Làm mới sessions"; }
 };
 
-$("#fStatus").onchange = (e) => { sf.status = e.target.value; renderSessions(); };
-$("#fAccount").onchange = (e) => { sf.account = e.target.value; renderSessions(); };
-$("#fAccel").onchange = (e) => { sf.accel = e.target.value; renderSessions(); };
-$("#fComp").onchange = (e) => { sf.comp = e.target.checked; renderSessions(); };
-$("#fSearch").oninput = (e) => { sf.q = e.target.value; renderSessions(); };
+$("#fStatus").onchange = (e) => { sf.status = e.target.value; pg.sessions = 1; renderSessions(); };
+$("#fAccount").onchange = (e) => { sf.account = e.target.value; pg.sessions = 1; renderSessions(); };
+$("#fAccel").onchange = (e) => { sf.accel = e.target.value; pg.sessions = 1; renderSessions(); };
+$("#fComp").onchange = (e) => { sf.comp = e.target.checked; pg.sessions = 1; renderSessions(); };
+$("#fSearch").oninput = (e) => { sf.q = e.target.value; pg.sessions = 1; renderSessions(); };
 
 // Cập nhật đồng hồ của các phiên đang chạy mỗi 30 giây mà không dựng lại bảng
 setInterval(() => {
@@ -674,7 +711,7 @@ function renderUComps() {
   const nowMs = Date.now(), today = utcDay(nowMs), body = $("#uCompBody"); body.replaceChildren();
   const rows = udata.competitions.filter((c) => c.active)
     .sort((a, b) => (Date.parse(a.deadline) || 9e15) - (Date.parse(b.deadline) || 9e15));
-  for (const c of rows) {
+  for (const c of paginate(rows, "comps", $("#uCompPager"), renderUComps)) {
     const mine = udata.submissions.filter((s) => s.account_id === c.account_id && s.competition === c.slug);
     const todayN = mine.filter((s) => utcDay(subTime(s)) === today).length;
     const latest = mine.filter((s) => s.public_score).sort((a, b) => subTime(b) - subTime(a))[0];
@@ -698,7 +735,7 @@ function renderUComps() {
 
 function renderUList() {
   const list = uFiltered(), body = $("#uBody"); body.replaceChildren();
-  for (const s of list.slice(0, 500)) {
+  for (const s of paginate(list, "subs", $("#uPager"), renderUList)) {
     const tr = el("tr"); const [lab, cls] = SUBST[s.status] || STATUS.unknown;
     const d = el("td"); d.append(el("div", "", s.description || s.file_name || "(không mô tả)"));
     if (s.description && s.file_name) d.append(el("div", "sub", s.file_name));
@@ -709,7 +746,7 @@ function renderUList() {
       el("td", "score", s.private_score || "–"), el("td", "", s.submitted_at ? fmtTime(s.submitted_at) : "–"));
     body.append(tr);
   }
-  $("#uCount").textContent = `${Math.min(list.length, 500)}/${udata.submissions.length} submission`;
+  $("#uCount").textContent = `${list.length}/${udata.submissions.length} submission`;
   const e = $("#uEmpty"); e.classList.toggle("hidden", list.length > 0);
   e.textContent = udata.submissions.length ? "Không có submission nào khớp bộ lọc." : "Chưa có submission nào.";
 }
@@ -749,10 +786,10 @@ $("#btnRefreshSub").onclick = async (ev) => {
   } catch (e) { notice("#uNotice", e.message, true); }
   finally { b.disabled = false; b.textContent = "Làm mới submissions"; }
 };
-$("#uStatus").onchange = (e) => { uf.status = e.target.value; renderUList(); };
-$("#uAccount").onchange = (e) => { uf.account = e.target.value; renderUList(); };
-$("#uComp").onchange = (e) => { uf.comp = e.target.value; renderUList(); };
-$("#uSearch").oninput = (e) => { uf.q = e.target.value; renderUList(); };
+$("#uStatus").onchange = (e) => { uf.status = e.target.value; pg.subs = 1; renderUList(); };
+$("#uAccount").onchange = (e) => { uf.account = e.target.value; pg.subs = 1; renderUList(); };
+$("#uComp").onchange = (e) => { uf.comp = e.target.value; pg.subs = 1; renderUList(); };
+$("#uSearch").oninput = (e) => { uf.q = e.target.value; pg.subs = 1; renderUList(); };
 
 // ---------- điều hướng ----------
 async function route() {
