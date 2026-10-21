@@ -453,3 +453,14 @@ def test_collect_reuses_verified_accelerator_for_same_version():
                       "machine_shape": "NvidiaTeslaT4", "last_run_time": None}}
     out = kaggle_probe.collect(api, {"known": known}, meta_fn=lambda *a: pytest.fail("không được hỏi lại"))
     assert out["items"][0]["accelerator"] == "gpu" and out["items"][0]["machine_shape"] == "NvidiaTeslaT4"
+
+
+def test_database_error_during_store_is_shown_on_account(client, tmp_path, pg_url):
+    login(client)
+    add(client, "acc1")
+    set_scenario(tmp_path, "token-aaaaaaaa", {"items": [item()]})
+    with psycopg.connect(pg_url, autocommit=True) as c:  # mô phỏng chưa chạy lại schema mới
+        c.execute("ALTER TABLE kernel_sessions DROP COLUMN accelerator_checked")
+    assert refresh(client)["failed"] == 1
+    err = client.get("/api/sessions").json()["accounts"][0]["sessions_error"]
+    assert err and "schema.sql" in err

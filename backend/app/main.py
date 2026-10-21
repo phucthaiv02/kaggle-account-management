@@ -294,22 +294,26 @@ async def refresh_sessions_account(acc: dict, budget_end: float, sem: asyncio.Se
     timeout = min(SESSIONS_TIMEOUT, budget_end - time.monotonic())
     if timeout < 8:
         return {"ok": False, "skipped": True}
-    known = await asyncio.to_thread(
-        db.select, "kernel_sessions", "*", {"account_id": eq(acc["id"])}, None, 2000
-    )
-    opts = sessions.probe_opts(
-        known, SESSIONS_LIMIT, SESSIONS_STATUS_LIMIT, SESSIONS_DURATION_BUDGET, max(5.0, timeout - 8),
-        SESSIONS_ACCEL_BUDGET,
-    )
     try:
+        known = await asyncio.to_thread(
+            db.select, "kernel_sessions", "*", {"account_id": eq(acc["id"])}, None, 2000
+        )
+        opts = sessions.probe_opts(
+            known, SESSIONS_LIMIT, SESSIONS_STATUS_LIMIT, SESSIONS_DURATION_BUDGET, max(5.0, timeout - 8),
+            SESSIONS_ACCEL_BUDGET,
+        )
         res = await kc.fetch_sessions(decrypt(acc["token_enc"]), acc["username"], opts, timeout, sem)
         if res.get("error"):
             raise kc.KaggleError(res["error"])
-    except (kc.KaggleError, RuntimeError) as e:
-        await asyncio.to_thread(_save_sessions_state, acc["id"], str(e))
-        return {"ok": False, "error": str(e)}
-    rows = sessions.merge(acc["id"], res.get("items", []), known, db.iso(db.utcnow()))
-    await asyncio.to_thread(_store_sessions, acc["id"], rows)
+        rows = sessions.merge(acc["id"], res.get("items", []), known, db.iso(db.utcnow()))
+        await asyncio.to_thread(_store_sessions, acc["id"], rows)
+    except Exception as e:  # mọi lỗi (Kaggle, database, giải mã token...) đều phải hiện ở thanh tài khoản
+        msg = str(e) or type(e).__name__
+        try:
+            await asyncio.to_thread(_save_sessions_state, acc["id"], msg[:500])
+        except Exception:
+            pass
+        return {"ok": False, "error": msg}
     return {
         "ok": True, "n": len(res.get("items", [])), "partial": bool(res.get("partial")),
         "running": sum(1 for r in rows if r["status"] == "running"),
