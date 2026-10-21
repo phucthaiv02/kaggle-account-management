@@ -31,9 +31,9 @@ def test_public_roles_cannot_read_tables_but_service_role_can(client, pg_url):
                 c.execute("SELECT * FROM login_fails")
     with psycopg.connect(pg_url) as c:
         rls = c.execute(
-            "SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('accounts','quota_snapshots','login_fails','kernel_sessions')"
+            "SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('accounts','quota_snapshots','login_fails','kernel_sessions','competition_entries','submissions')"
         ).fetchall()
-    assert len(rls) == 4 and all(r[1] for r in rls), "RLS phải bật trên cả 4 bảng"
+    assert len(rls) == 6 and all(r[1] for r in rls), "RLS phải bật trên cả 6 bảng"
 
 
 def test_schema_is_idempotent(pg_url, client):

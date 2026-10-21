@@ -99,5 +99,60 @@ revoke all on sequence public.kernel_sessions_id_seq from anon, authenticated;
 grant select, insert, update, delete on public.kernel_sessions to service_role;
 grant usage, select on sequence public.kernel_sessions_id_seq to service_role;
 
+-- ---------- Submissions trên các competition ----------
+alter table public.accounts add column if not exists subs_checked_at timestamptz;
+alter table public.accounts add column if not exists subs_error text;
+
+create table if not exists public.competition_entries (
+    id              bigserial primary key,
+    account_id      bigint not null references public.accounts(id) on delete cascade,
+    slug            text not null,                      -- tên ngắn của competition
+    title           text,
+    deadline        timestamptz,
+    category        text,
+    reward          text,
+    team_count      integer,
+    user_rank       integer,
+    max_daily_submissions integer,
+    evaluation_metric text,
+    url             text,
+    active          boolean not null default true,      -- còn hạn nộp / đang chấm
+    submissions_disabled boolean not null default false,
+    submissions_fetched boolean not null default false, -- đã lấy được danh sách submission ở lần quét gần nhất
+    updated_at      timestamptz not null default now(),
+    unique (account_id, slug)
+);
+create index if not exists idx_ce_active on public.competition_entries(active, deadline);
+
+create table if not exists public.submissions (
+    id              bigserial primary key,
+    account_id      bigint not null references public.accounts(id) on delete cascade,
+    competition     text not null,
+    ref             bigint not null,                    -- mã submission do Kaggle cấp
+    submitted_at    timestamptz,
+    description     text,
+    file_name       text,
+    status          text not null default 'unknown',    -- pending | complete | error | unknown
+    public_score    text,                               -- Kaggle trả dạng chuỗi
+    private_score   text,
+    error_description text,
+    team_name       text,
+    submitted_by    text,
+    url             text,
+    total_bytes     bigint,
+    first_seen_at   timestamptz not null default now(),
+    updated_at      timestamptz not null default now(),
+    unique (account_id, competition, ref)
+);
+create index if not exists idx_sub_date on public.submissions(account_id, submitted_at desc);
+create index if not exists idx_sub_status on public.submissions(status);
+
+alter table public.competition_entries enable row level security;
+alter table public.submissions enable row level security;
+revoke all on public.competition_entries, public.submissions from anon, authenticated;
+revoke all on sequence public.competition_entries_id_seq, public.submissions_id_seq from anon, authenticated;
+grant select, insert, update, delete on public.competition_entries, public.submissions to service_role;
+grant usage, select on sequence public.competition_entries_id_seq, public.submissions_id_seq to service_role;
+
 -- Báo cho Data API nạp lại danh sách bảng
 notify pgrst, 'reload schema';

@@ -44,7 +44,8 @@ opts = json.loads(sys.argv[1])
 with open(os.environ["FAKE_PROBE_LOG"], "a") as f:
     f.write(json.dumps({"token": os.environ.get("KAGGLE_API_TOKEN"), "opts": opts}) + "\n")
 scenario = json.load(open(os.environ["FAKE_PROBE_SCENARIO"]))
-res = scenario.get(os.environ.get("KAGGLE_API_TOKEN", ""))
+key = os.environ.get("KAGGLE_API_TOKEN", "") + (":submissions" if opts.get("mode") == "submissions" else "")
+res = scenario.get(key)
 print("Authentication required to call the Kaggle API.")  # nhiễu như CLI thật
 if res is None:
     sys.stderr.write("không có kịch bản"); sys.exit(1)

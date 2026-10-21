@@ -98,6 +98,12 @@
   .kv .k { font-size: 12px; color: var(--muted); }
   .kv .v { font-size: 13px; word-break: break-word; }
   .footnote { margin-top: 14px; line-height: 1.5; }
+  .h2 { font-size: 16px; margin: 22px 0 10px; }
+  .st-pending { color: var(--warn); background: rgba(217,138,0,.14); }
+  .st-pending::before { animation: pulse 1.4s infinite; }
+  .score { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .lim { white-space: nowrap; }
+  .lim.full { color: var(--warn); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -119,6 +125,7 @@
     <nav>
       <a href="#/accounts" id="navAcc">Tài khoản</a>
       <a href="#/sessions" id="navSes">Sessions</a>
+      <a href="#/submissions" id="navSub">Submissions</a>
     </nav>
     <span class="spacer"></span>
     <span id="actAcc" class="row">
@@ -127,6 +134,9 @@
     </span>
     <span id="actSes" class="row hidden">
       <button id="btnRefreshSes" class="primary">Làm mới sessions</button>
+    </span>
+    <span id="actSub" class="row hidden">
+      <button id="btnRefreshSub" class="primary">Làm mới submissions</button>
     </span>
     <button id="btnLogout">Đăng xuất</button>
   </header>
@@ -181,6 +191,54 @@
         Trang này hiển thị <b>phiên chạy gần nhất của từng notebook</b> (Save &amp; Run All hoặc đẩy qua API).
         "Bắt đầu" là thời điểm chạy gần nhất do Kaggle báo; thời lượng của phiên đã xong là <b>ước tính</b> từ log.
         Giới hạn một phiên: 12 giờ với CPU/GPU, 9 giờ với TPU.
+      </div>
+    </div>
+
+    <!-- Trang Submissions -->
+    <div id="viewSub" class="hidden">
+      <div id="uNotice" class="hidden" style="margin-bottom:12px;font-size:14px"></div>
+      <div id="uChips" class="chips"></div>
+      <div id="uAccounts" class="strip"></div>
+      <h2 class="h2">Theo competition</h2>
+      <div class="tablewrap">
+        <table style="min-width:900px">
+          <thead><tr>
+            <th>Competition</th><th>Hạn chót</th><th>Tài khoản</th><th>Submission</th><th>Hôm nay</th>
+            <th>Đang chấm</th><th>Lỗi</th><th>Điểm public gần nhất</th><th>Hạng</th>
+          </tr></thead>
+          <tbody id="uCompBody"></tbody>
+        </table>
+      </div>
+      <div id="uCompEmpty" class="empty hidden"></div>
+
+      <h2 class="h2">Danh sách submission</h2>
+      <div class="toolbar">
+        <select id="uStatus" aria-label="Lọc trạng thái">
+          <option value="all">Mọi trạng thái</option>
+          <option value="pending">Đang chấm</option>
+          <option value="complete">Đã có điểm</option>
+          <option value="error">Lỗi</option>
+        </select>
+        <select id="uAccount" aria-label="Lọc tài khoản"></select>
+        <select id="uComp" aria-label="Lọc competition"></select>
+        <input type="search" id="uSearch" placeholder="Tìm mô tả, file…" aria-label="Tìm kiếm">
+        <span class="sub" id="uCount"></span>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>Trạng thái</th><th>Competition</th><th>Tài khoản</th><th>Mô tả / file</th>
+            <th>Public</th><th>Private</th><th>Nộp lúc</th>
+          </tr></thead>
+          <tbody id="uBody"></tbody>
+        </table>
+      </div>
+      <div id="uEmpty" class="empty hidden"></div>
+      <div class="sub footnote">
+        Chỉ lấy các competition tài khoản đã tham gia và <b>còn hạn</b> (đang diễn ra hoặc đang chờ chấm), tối đa 20 competition
+        và 50 submission gần nhất mỗi competition. Điểm private thường chỉ hiện sau khi competition kết thúc. "Hôm nay" tính
+        theo ngày UTC (mốc Kaggle đặt lại giới hạn nộp mỗi ngày). Kaggle không cho biết hướng "tốt hơn" của điểm nên trang này
+        không xếp hạng điểm, chỉ hiển thị nguyên văn.
       </div>
     </div>
   </main>
@@ -568,16 +626,148 @@ setInterval(() => {
   });
 }, 30000);
 
+// ---------- Submissions ----------
+let udata = { accounts: [], competitions: [], submissions: [], now: null };
+const uf = { status: "all", account: "all", comp: "all", q: "" };
+const SUBST = { pending: ["Đang chấm", "st-pending"], complete: ["Đã có điểm", "st-complete"], error: ["Lỗi", "st-error"] };
+const uAcc = (id) => (udata.accounts.find((a) => a.id === id) || {}).name || `#${id}`;
+const utcDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+const subTime = (s) => { const t = Date.parse(s.submitted_at); return isNaN(t) ? 0 : t; };
+
+function countdown(ts, nowMs) {
+  const t = Date.parse(ts); if (isNaN(t)) return "–";
+  const d = t - nowMs; if (d <= 0) return "đã hết hạn";
+  const days = Math.floor(d / 864e5), h = Math.floor((d % 864e5) / 36e5);
+  return days > 0 ? `còn ${days} ngày ${h} giờ` : `còn ${h} giờ ${Math.floor((d % 36e5) / 6e4)} phút`;
+}
+
+function uFiltered() {
+  const q = uf.q.trim().toLowerCase();
+  return udata.submissions.filter((s) =>
+    (uf.status === "all" || s.status === uf.status)
+    && (uf.account === "all" || String(s.account_id) === uf.account)
+    && (uf.comp === "all" || s.competition === uf.comp)
+    && (!q || `${s.description} ${s.file_name} ${s.competition}`.toLowerCase().includes(q)));
+}
+
+function renderUChips() {
+  const subs = udata.submissions, nowMs = Date.now(), today = utcDay(nowMs);
+  const slugs = new Set(udata.competitions.filter((c) => c.active).map((c) => c.slug));
+  const chips = [
+    ["Competition đang diễn ra", slugs.size], ["Tổng submission", subs.length],
+    ["Đang chấm", subs.filter((s) => s.status === "pending").length],
+    ["Lỗi", subs.filter((s) => s.status === "error").length],
+    ["Nộp hôm nay (UTC)", subs.filter((s) => utcDay(subTime(s)) === today).length],
+  ];
+  const box = $("#uChips"); box.replaceChildren();
+  for (const [l, n] of chips) { const c = el("div", "chip"); c.append(el("div", "n", String(n)), el("div", "l", l)); box.append(c); }
+  const strip = $("#uAccounts"); strip.replaceChildren();
+  for (const a of udata.accounts) {
+    const c = el("div", "acc"); const t = el("div", "t"); t.append(el("span", "", a.name));
+    c.append(t, el("div", "sub", "cập nhật " + ago(a.subs_checked_at, "chưa quét")));
+    if (a.subs_error) c.append(el("div", "err", a.subs_error));
+    strip.append(c);
+  }
+}
+
+function renderUComps() {
+  const nowMs = Date.now(), today = utcDay(nowMs), body = $("#uCompBody"); body.replaceChildren();
+  const rows = udata.competitions.filter((c) => c.active)
+    .sort((a, b) => (Date.parse(a.deadline) || 9e15) - (Date.parse(b.deadline) || 9e15));
+  for (const c of rows) {
+    const mine = udata.submissions.filter((s) => s.account_id === c.account_id && s.competition === c.slug);
+    const todayN = mine.filter((s) => utcDay(subTime(s)) === today).length;
+    const latest = mine.filter((s) => s.public_score).sort((a, b) => subTime(b) - subTime(a))[0];
+    const tr = el("tr");
+    const t1 = el("td", "nb"); const ti = el("div", "title"); ti.append(link(c.title || c.slug, competitionUrl(c.slug)));
+    t1.append(ti, el("div", "ref", [c.category, c.reward, c.evaluation_metric].filter(Boolean).join(" · ")));
+    const t2 = el("td"); t2.append(el("div", "", countdown(c.deadline, nowMs)), el("div", "sub", c.deadline ? fmtTime(c.deadline) : ""));
+    const lim = c.max_daily_submissions; const t5 = el("td");
+    t5.append(el("span", "lim" + (lim && todayN >= lim ? " full" : ""), lim ? `${todayN}/${lim}` : String(todayN)));
+    const t8 = el("td", "score", latest ? latest.public_score : "–");
+    tr.append(t1, t2, el("td", "", uAcc(c.account_id)),
+      el("td", "", c.submissions_fetched ? String(mine.length) : "chưa lấy được"), t5,
+      el("td", "", String(mine.filter((s) => s.status === "pending").length)),
+      el("td", "", String(mine.filter((s) => s.status === "error").length)), t8,
+      el("td", "", c.user_rank ? `#${c.user_rank}${c.team_count ? " / " + c.team_count : ""}` : "–"));
+    body.append(tr);
+  }
+  const e = $("#uCompEmpty"); e.classList.toggle("hidden", rows.length > 0);
+  e.textContent = 'Chưa có competition còn hạn. Bấm "Làm mới submissions" để lấy từ Kaggle.';
+}
+
+function renderUList() {
+  const list = uFiltered(), body = $("#uBody"); body.replaceChildren();
+  for (const s of list.slice(0, 500)) {
+    const tr = el("tr"); const [lab, cls] = SUBST[s.status] || STATUS.unknown;
+    const d = el("td"); d.append(el("div", "", s.description || s.file_name || "(không mô tả)"));
+    if (s.description && s.file_name) d.append(el("div", "sub", s.file_name));
+    if (s.error_description) d.append(el("div", "err", s.error_description));
+    const st = el("td"); st.append(el("span", "badge " + cls, lab));
+    const cm = el("td"); cm.append(link(s.competition, competitionUrl(s.competition)));
+    tr.append(st, cm, el("td", "", uAcc(s.account_id)), d, el("td", "score", s.public_score || "–"),
+      el("td", "score", s.private_score || "–"), el("td", "", s.submitted_at ? fmtTime(s.submitted_at) : "–"));
+    body.append(tr);
+  }
+  $("#uCount").textContent = `${Math.min(list.length, 500)}/${udata.submissions.length} submission`;
+  const e = $("#uEmpty"); e.classList.toggle("hidden", list.length > 0);
+  e.textContent = udata.submissions.length ? "Không có submission nào khớp bộ lọc." : "Chưa có submission nào.";
+}
+
+function syncUFilters() {
+  const a = $("#uAccount"); a.replaceChildren(); a.append(new Option("Mọi tài khoản", "all"));
+  udata.accounts.forEach((x) => a.append(new Option(x.name, String(x.id))));
+  if (![...a.options].some((o) => o.value === uf.account)) uf.account = "all";
+  a.value = uf.account;
+  const c = $("#uComp"); c.replaceChildren(); c.append(new Option("Mọi competition", "all"));
+  [...new Set(udata.competitions.map((x) => x.slug))].sort().forEach((x) => c.append(new Option(x, x)));
+  if (![...c.options].some((o) => o.value === uf.comp)) uf.comp = "all";
+  c.value = uf.comp; $("#uStatus").value = uf.status;
+}
+
+function renderSubmissions() { renderUChips(); renderUComps(); renderUList(); }
+
+async function loadSubmissions() {
+  try { udata = await api("/submissions"); } catch (e) {
+    if (e.message === "Chưa đăng nhập") return;
+    showApp(); udata = { accounts: [], competitions: [], submissions: [], now: null }; renderSubmissions();
+    const em = $("#uEmpty"); em.classList.remove("hidden"); em.style.color = "var(--bad)"; em.textContent = e.message; return;
+  }
+  showApp(); $("#uEmpty").style.color = ""; syncUFilters(); renderSubmissions();
+}
+
+$("#btnRefreshSub").onclick = async (ev) => {
+  const b = ev.target; b.disabled = true; b.textContent = "Đang lấy từ Kaggle…";
+  try {
+    const r = await api("/submissions/refresh", { method: "POST" });
+    await loadSubmissions();
+    const parts = [`Đã cập nhật ${r.done}/${r.total} tài khoản`, `${r.competitions} competition`, `${r.submissions} submission`, `${r.pending} đang chấm`];
+    if (r.failed) parts.push(`${r.failed} tài khoản lỗi (xem ở thanh tài khoản)`);
+    if (r.skipped) parts.push(`${r.skipped} chưa kịp xử lý, bấm lại để tiếp tục`);
+    if (r.partial) parts.push("một số competition chưa lấy được, bấm lại để bổ sung");
+    notice("#uNotice", parts.join(" · "), r.failed || r.skipped || r.partial);
+  } catch (e) { notice("#uNotice", e.message, true); }
+  finally { b.disabled = false; b.textContent = "Làm mới submissions"; }
+};
+$("#uStatus").onchange = (e) => { uf.status = e.target.value; renderUList(); };
+$("#uAccount").onchange = (e) => { uf.account = e.target.value; renderUList(); };
+$("#uComp").onchange = (e) => { uf.comp = e.target.value; renderUList(); };
+$("#uSearch").oninput = (e) => { uf.q = e.target.value; renderUList(); };
+
 // ---------- điều hướng ----------
 async function route() {
-  const page = location.hash.startsWith("#/sessions") ? "sessions" : "accounts";
+  const page = location.hash.startsWith("#/sessions") ? "sessions"
+    : location.hash.startsWith("#/submissions") ? "submissions" : "accounts";
   $("#viewAcc").classList.toggle("hidden", page !== "accounts");
   $("#viewSes").classList.toggle("hidden", page !== "sessions");
   $("#actAcc").classList.toggle("hidden", page !== "accounts");
   $("#actSes").classList.toggle("hidden", page !== "sessions");
+  $("#viewSub").classList.toggle("hidden", page !== "submissions");
+  $("#actSub").classList.toggle("hidden", page !== "submissions");
+  $("#navSub").classList.toggle("active", page === "submissions");
   $("#navAcc").classList.toggle("active", page === "accounts");
   $("#navSes").classList.toggle("active", page === "sessions");
-  await (page === "sessions" ? loadSessions() : loadAccounts());
+  await (page === "sessions" ? loadSessions() : page === "submissions" ? loadSubmissions() : loadAccounts());
 }
 window.addEventListener("hashchange", route);
 route();

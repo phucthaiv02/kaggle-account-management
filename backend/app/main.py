@@ -350,6 +350,121 @@ async def refresh_sessions():
     return await refresh_sessions_all()
 
 
+# ---------- Submissions ----------
+SUBS_PER_COMP = int(os.environ.get("SUBMISSIONS_PER_COMPETITION", "50"))
+SUBS_MAX_COMPS = int(os.environ.get("SUBMISSIONS_MAX_COMPETITIONS", "20"))
+SUBS_TIMEOUT = float(os.environ.get("SUBMISSIONS_TIMEOUT", "40"))
+
+COMP_KEYS = (
+    "account_id", "slug", "title", "deadline", "category", "reward", "team_count", "user_rank",
+    "max_daily_submissions", "evaluation_metric", "url", "active", "submissions_disabled",
+    "submissions_fetched", "updated_at",
+)
+SUB_KEYS = (
+    "account_id", "competition", "ref", "submitted_at", "description", "file_name", "status", "public_score",
+    "private_score", "error_description", "team_name", "submitted_by", "url", "total_bytes", "updated_at",
+)
+
+
+def _save_subs_state(account_id: int, error: str | None) -> None:
+    db.update("accounts", {"id": eq(account_id)}, {"subs_checked_at": db.iso(db.utcnow()), "subs_error": error})
+
+
+def build_submission_rows(account_id: int, res: dict, now: str) -> tuple[list[dict], list[dict]]:
+    """Chuyển kết quả của kaggle_probe thành hàng DB (mọi hàng cùng tập khóa, xem db.upsert)."""
+    comps = [
+        {
+            "account_id": account_id, "slug": c["slug"], "title": c.get("title"), "deadline": c.get("deadline"),
+            "category": c.get("category"), "reward": c.get("reward"), "team_count": c.get("team_count"),
+            "user_rank": c.get("user_rank"), "max_daily_submissions": c.get("max_daily_submissions"),
+            "evaluation_metric": c.get("evaluation_metric"), "url": c.get("url"), "active": bool(c.get("active", True)),
+            "submissions_disabled": bool(c.get("submissions_disabled")),
+            "submissions_fetched": bool(c.get("submissions_fetched")), "updated_at": now,
+        }
+        for c in res.get("competitions", [])
+    ]
+    subs = [
+        {
+            "account_id": account_id, "competition": s["competition"], "ref": s["ref"], "submitted_at": s.get("date"),
+            "description": s.get("description"), "file_name": s.get("file_name"), "status": s.get("status") or "unknown",
+            "public_score": s.get("public_score"), "private_score": s.get("private_score"),
+            "error_description": s.get("error_description"), "team_name": s.get("team_name"),
+            "submitted_by": s.get("submitted_by"), "url": s.get("url"), "total_bytes": s.get("total_bytes"),
+            "updated_at": now,
+        }
+        for s in res.get("submissions", [])
+    ]
+    assert all(set(r) == set(COMP_KEYS) for r in comps) and all(set(r) == set(SUB_KEYS) for r in subs)
+    return comps, subs
+
+
+def _store_submissions(account_id: int, comps: list[dict], subs: list[dict], complete: bool) -> None:
+    db.upsert("competition_entries", comps, "account_id,slug")
+    db.upsert("submissions", subs, "account_id,competition,ref")
+    if complete:  # danh sách đầy đủ: competition không còn trong danh sách "còn hạn" thì đánh dấu đã kết thúc
+        keep = {c["slug"] for c in comps}
+        for r in db.select("competition_entries", "id,slug,active", {"account_id": eq(account_id)}):
+            if r["active"] and r["slug"] not in keep:
+                db.update("competition_entries", {"id": eq(r["id"])}, {"active": False})
+    _save_subs_state(account_id, None)
+
+
+async def refresh_submissions_account(acc: dict, budget_end: float, sem: asyncio.Semaphore) -> dict:
+    timeout = min(SUBS_TIMEOUT, budget_end - time.monotonic())
+    if timeout < 8:
+        return {"ok": False, "skipped": True}
+    try:
+        opts = {
+            "mode": "submissions", "only_active": True, "max_competitions": SUBS_MAX_COMPS,
+            "per_competition": SUBS_PER_COMP, "deadline_seconds": max(5.0, timeout - 8),
+        }
+        res = await kc.fetch_sessions(decrypt(acc["token_enc"]), acc["username"], opts, timeout, sem)
+        if res.get("error"):
+            raise kc.KaggleError(res["error"])
+        comps, subs = build_submission_rows(acc["id"], res, db.iso(db.utcnow()))
+        await asyncio.to_thread(_store_submissions, acc["id"], comps, subs, not res.get("partial"))
+    except Exception as e:  # mọi lỗi đều hiện ở thanh tài khoản
+        msg = str(e) or type(e).__name__
+        try:
+            await asyncio.to_thread(_save_subs_state, acc["id"], msg[:500])
+        except Exception:
+            pass
+        return {"ok": False, "error": msg}
+    return {
+        "ok": True, "competitions": len(comps), "submissions": len(subs), "partial": bool(res.get("partial")),
+        "errors": res.get("errors") or {}, "pending": sum(1 for s in subs if s["status"] == "pending"),
+    }
+
+
+async def refresh_submissions_all() -> dict:
+    accs = await asyncio.to_thread(db.select, "accounts", "id,username,token_enc,subs_checked_at")
+    accs.sort(key=lambda a: (a["subs_checked_at"] is not None, a["subs_checked_at"] or "", a["id"]))
+    budget_end = time.monotonic() + REFRESH_BUDGET
+    sem = asyncio.Semaphore(kc.CONCURRENCY)
+    results = await asyncio.gather(*(refresh_submissions_account(a, budget_end, sem) for a in accs), return_exceptions=True)
+    ok = [r for r in results if isinstance(r, dict) and r.get("ok")]
+    skipped = sum(1 for r in results if isinstance(r, dict) and r.get("skipped"))
+    return {
+        "total": len(accs), "done": len(ok), "skipped": skipped, "failed": len(accs) - len(ok) - skipped,
+        "competitions": sum(r["competitions"] for r in ok), "submissions": sum(r["submissions"] for r in ok),
+        "pending": sum(r["pending"] for r in ok), "partial": any(r["partial"] or r["errors"] for r in ok),
+    }
+
+
+@app.get("/api/submissions", dependencies=[Depends(require_auth)])
+def list_submissions():
+    comps = db.select("competition_entries", "*", order="deadline.asc.nullslast", limit=1000)
+    subs = db.select("submissions", "*", order="submitted_at.desc.nullslast", limit=5000)
+    accounts = db.select("accounts", "id,name,subs_checked_at,subs_error")
+    accounts.sort(key=lambda a: a["name"].lower())
+    return {"now": db.iso(db.utcnow()), "accounts": accounts, "competitions": comps, "submissions": subs}
+
+
+@app.post("/api/submissions/refresh", dependencies=[Depends(require_auth)])
+async def refresh_submissions():
+    return await refresh_submissions_all()
+
+
 # ---------- frontend ----------
 # Trên Vercel, thư mục public/ được phục vụ từ CDN. Route này để chạy cục bộ.
 @app.get("/", include_in_schema=False)

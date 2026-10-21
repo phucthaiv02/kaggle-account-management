@@ -167,6 +167,69 @@ def collect(api, opts: dict, clock=time.monotonic, meta_fn=fetch_meta) -> dict:
     return {"user": user, "listed": len(kernels), "partial": partial, "items": items}
 
 
+_SUB_STATUS = {0: "pending", 1: "complete", 2: "error"}
+
+
+def _slug(c) -> str:
+    """Tên ngắn của competition (dùng trong URL/API) từ ref hoặc url."""
+    ref = str(getattr(c, "ref", "") or "")
+    if not ref:
+        ref = str(getattr(c, "url", "") or "")
+    return ref.rstrip("/").rsplit("/", 1)[-1]
+
+
+def collect_submissions(api, opts: dict, clock=time.monotonic) -> dict:
+    """Competition tài khoản đã tham gia + submission của từng cái.
+
+    Mặc định chỉ lấy competition còn hạn (đang chấm/đang diễn ra); only_active=False lấy cả đã kết thúc.
+    """
+    only_active = bool(opts.get("only_active", True))
+    max_comps = max(1, min(int(opts.get("max_competitions", 20)), 50))
+    per_comp = max(1, min(int(opts.get("per_competition", 50)), 100))
+    deadline = clock() + float(opts.get("deadline_seconds", 30))
+    now = datetime.now().astimezone()
+
+    resp = api.competitions_list(group="entered", category="all", sort_by="latestDeadline", page_size=max_comps)
+    comps_raw = list(getattr(resp, "competitions", None) or [])
+    comps, subs, partial, errors = [], [], False, {}
+    for c in comps_raw:
+        dl = getattr(c, "deadline", None)
+        active = dl is None or (dl if dl.tzinfo else dl.astimezone()) > now
+        if only_active and not active:
+            continue
+        slug = _slug(c)
+        if not slug:
+            continue
+        comps.append({
+            "slug": slug, "title": c.title or slug, "deadline": _iso(dl), "category": c.category or "",
+            "reward": c.reward or "", "team_count": int(c.team_count or 0), "user_rank": int(c.user_rank or 0) or None,
+            "max_daily_submissions": int(c.max_daily_submissions or 0) or None,
+            "evaluation_metric": c.evaluation_metric or "", "url": c.url or "", "active": active,
+            "submissions_disabled": bool(c.submissions_disabled), "submissions_fetched": False,
+        })
+    for comp in comps:
+        if clock() >= deadline:
+            partial = True
+            break
+        try:
+            lst = api.competition_submissions(comp["slug"], page_size=per_comp) or []
+        except (Exception, SystemExit) as e:  # một competition lỗi không làm hỏng các cái còn lại
+            errors[comp["slug"]] = str(e)[:200]
+            continue
+        comp["submissions_fetched"] = True
+        for s in lst:
+            st = s.status
+            st = getattr(st, "name", None) and st.name.lower() or _SUB_STATUS.get(getattr(st, "value", st), "unknown")
+            subs.append({
+                "competition": comp["slug"], "ref": int(s.ref), "date": _iso(s.date),
+                "description": s.description or "", "file_name": s.file_name or "",
+                "status": st, "public_score": s.public_score or None, "private_score": s.private_score or None,
+                "error_description": s.error_description or None, "team_name": s.team_name or "",
+                "submitted_by": s.submitted_by or "", "url": s.url or "", "total_bytes": int(s.total_bytes or 0),
+            })
+    return {"competitions": comps, "submissions": subs, "listed": len(comps_raw), "partial": partial, "errors": errors}
+
+
 def main(argv: list[str]) -> None:
     opts = json.loads(argv[1]) if len(argv) > 1 else {}
     try:
@@ -174,7 +237,7 @@ def main(argv: list[str]) -> None:
 
         api = KaggleApi()
         api.authenticate()
-        out = collect(api, opts)
+        out = collect_submissions(api, opts) if opts.get("mode") == "submissions" else collect(api, opts)
     except SystemExit:  # authenticate() gọi exit(1) khi xác thực thất bại
         out = {"error": "Xác thực Kaggle thất bại (token sai hoặc hết hạn)"}
     except Exception as e:

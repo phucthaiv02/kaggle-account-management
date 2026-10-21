@@ -8,6 +8,7 @@ Trang web quản lý nhiều tài khoản Kaggle: lưu token đã mã hóa, xem 
 - Dữ liệu lưu ở Supabase qua Data API (REST) bằng `SUPABASE_URL` + khóa secret. Token Kaggle được mã hóa Fernet (khóa `SECRET_KEY`) trước khi ghi; trình duyệt không bao giờ nhận lại token và API danh sách không hề truy vấn cột token.
 - **Không có cron.** Quota được làm mới khi bạn bấm **Làm mới** (từng tài khoản) hoặc **Làm mới tất cả**. Nút "tất cả" xử lý từ tài khoản cũ nhất và dừng khi hết `REFRESH_BUDGET_SECONDS` (mặc định 50s); nếu còn sót, giao diện báo để bạn bấm lại.
 - **Trang Sessions** (`#/sessions`): theo dõi các lần chạy notebook của mọi tài khoản: đang chạy / đã xong / lỗi, tài khoản nào, GPU/TPU/CPU, thời gian đã chạy, challenge (competition) và dataset gắn kèm, link mở notebook, internet bật hay không, số vote, thông báo lỗi... Bấm **Làm mới** để thu thập; dữ liệu lưu ở bảng `kernel_sessions`.
+- **Trang Submissions** (`#/submissions`): thống kê submission trên các competition tài khoản đã tham gia và **còn hạn** (đang diễn ra hoặc đang chờ chấm): số competition, tổng submission, số đang chấm, lỗi, số lần nộp hôm nay (tính theo ngày UTC, so với giới hạn nộp mỗi ngày), điểm public gần nhất, hạng, hạn chót còn bao lâu; bên dưới là danh sách submission có lọc theo trạng thái, tài khoản, competition. Điểm private thường chỉ có sau khi competition kết thúc. Trang không xếp hạng điểm vì Kaggle không cho biết điểm cao hay thấp là tốt hơn. Competition nào hết hạn sẽ tự ẩn khỏi trang ở lần quét kế tiếp (dữ liệu cũ vẫn lưu trong database).
 - Đăng nhập bằng một mật khẩu quản trị. Phiên là cookie có chữ ký (không lưu trên server), đổi `ADMIN_PASSWORD` sẽ đăng xuất mọi phiên.
 
 ## Triển khai
@@ -65,7 +66,7 @@ Mở http://localhost:8000. Chạy kiểm thử: `python -m pytest backend/tests
 - **`maxDuration`**: `vercel.json` đặt 60 giây cho function; `REFRESH_BUDGET_SECONDS` phải nhỏ hơn giá trị này. Nếu gói Vercel của bạn giới hạn thấp hơn, hạ cả hai và bấm "Làm mới tất cả" nhiều lần khi có nhiều tài khoản.
 - **Sessions: giới hạn của API Kaggle.** Kaggle không có API công khai liệt kê phiên tương tác (đang mở notebook để sửa). Trang này theo dõi các lần *chạy* (commit/run) của notebook thuộc tài khoản. Thời điểm bắt đầu lấy từ `lastRunTime`; thời gian đã chạy được ước tính từ mốc log cuối nên chỉ gần đúng, và có thể trống nếu log không đọc được. Lần chạy đã kết thúc và không đổi phiên bản sẽ không bị hỏi lại. Giới hạn mỗi lần quét chỉnh bằng `SESSIONS_*` (xem `.env.example`); quét dở vì hết giờ sẽ báo "một phần", bấm lại để tiếp tục.
 - **Loại máy (GPU/TPU/CPU)**: dòng trong danh sách của Kaggle có thể thiếu thông tin máy, nên mỗi quét sẽ hỏi lại metadata của từng phiên bản (tối đa `SESSIONS_ACCEL_BUDGET` cái) và chỉ ghi "CPU" khi đã xác minh; chưa xác minh được thì hiện "Chưa rõ" và được kiểm tra tiếp ở lần quét sau.
-- **Cập nhật schema**: sau khi nâng cấp, chạy lại toàn bộ `supabase/schema.sql` trong SQL Editor (idempotent) để có bảng `kernel_sessions` và cột mới của `accounts`. Trang Tài khoản vẫn dùng được nếu chưa chạy, riêng trang Sessions sẽ báo 503 kèm hướng dẫn.
+- **Cập nhật schema**: sau khi nâng cấp, chạy lại toàn bộ `supabase/schema.sql` trong SQL Editor (idempotent) để có bảng `kernel_sessions` và cột mới của `accounts`. Trang Tài khoản vẫn dùng được nếu chưa chạy, riêng trang Sessions sẽ báo 503 kèm hướng dẫn. Bản có tab Submissions thêm 2 bảng (`competition_entries`, `submissions`) và 2 cột của `accounts`; cần chạy lại schema thì tab đó mới dùng được.
 - Giao diện chỉ còn nút **Làm mới tất cả** và **Xóa** trên mỗi tài khoản; các endpoint sửa tài khoản, làm mới từng tài khoản, notebook và lịch sử quota vẫn còn ở backend.
 - Mỗi lần làm mới ghi một snapshot; snapshot cũ hơn 90 ngày tự bị xóa.
 - Đăng nhập sai quá 5 lần/IP hoặc 30 lần tổng trong 15 phút sẽ bị khóa tạm thời.
@@ -88,3 +89,5 @@ Mở http://localhost:8000. Chạy kiểm thử: `python -m pytest backend/tests
 | GET | `/api/accounts/{id}/kernels` | Notebook của tài khoản |
 | GET | `/api/sessions` | Các lần chạy notebook + trạng thái quét từng tài khoản |
 | POST | `/api/sessions/refresh` | Quét lại sessions (có giới hạn thời gian) |
+| GET | `/api/submissions` | Competition còn hạn + submission + trạng thái quét từng tài khoản |
+| POST | `/api/submissions/refresh` | Quét lại submission (có giới hạn thời gian) |
