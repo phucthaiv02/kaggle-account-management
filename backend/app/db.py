@@ -72,7 +72,12 @@ def _explain(r: httpx.Response) -> str:
     if r.status_code in (401, 403) and code != "42501":
         return "Supabase từ chối khóa (kiểm tra SUPABASE_URL và SUPABASE_SECRET_KEY)"
     if code == "42501" or "permission denied" in str(msg).lower():
-        return "Supabase báo thiếu quyền trên bảng: hãy chạy lại supabase/schema.sql (phần GRANT cho service_role)"
+        return (
+            "Supabase báo thiếu quyền trên bảng. Kiểm tra theo thứ tự: "
+            "(1) SUPABASE_SECRET_KEY phải là khóa secret/service_role, KHÔNG phải khóa anon/publishable "
+            "(khóa công khai bị thu hồi quyền theo thiết kế); "
+            "(2) chạy lại supabase/schema.sql, đặc biệt phần GRANT cho service_role"
+        )
     if code in ("PGRST205", "42P01") or "schema cache" in str(msg):
         return "Chưa có bảng: hãy chạy supabase/schema.sql trong SQL Editor của Supabase"
     return f"Supabase lỗi {r.status_code}: {str(msg)[:200]}"
