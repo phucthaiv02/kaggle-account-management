@@ -164,7 +164,8 @@ def collect(api, opts: dict, clock=time.monotonic, meta_fn=fetch_meta) -> dict:
         user = api.get_config_value("username")
     except Exception:
         user = None
-    return {"user": user, "listed": len(kernels), "partial": partial, "items": items}
+    # Chỉ lấy trang 1: nếu số notebook trả về ít hơn giới hạn thì đó là toàn bộ danh sách hiện có trên Kaggle
+    return {"user": user, "listed": len(kernels), "complete": len(kernels) < limit, "partial": partial, "items": items}
 
 
 _SUB_STATUS = {0: "pending", 1: "complete", 2: "error"}

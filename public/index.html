@@ -167,6 +167,7 @@
           <option value="complete">Hoàn tất</option>
           <option value="error">Lỗi</option>
           <option value="other">Khác (hủy, không rõ)</option>
+          <option value="deleted">Notebook đã xóa</option>
         </select>
         <select id="fAccount" aria-label="Lọc tài khoản"></select>
         <select id="fAccel" aria-label="Lọc loại máy">
@@ -451,7 +452,7 @@ $("#btnRefreshAll").onclick = async (ev) => {
 const STATUS = {
   running: ["Đang chạy", "st-running"], queued: ["Hàng chờ", "st-queued"], complete: ["Hoàn tất", "st-complete"],
   error: ["Lỗi", "st-error"], cancel_requested: ["Đang hủy", "st-cancel"], cancel_acknowledged: ["Đã hủy", "st-cancel"],
-  new_script: ["Mới", "st-unknown"], unknown: ["Không rõ", "st-unknown"],
+  new_script: ["Mới", "st-unknown"], unknown: ["Không rõ", "st-unknown"], deleted: ["Đã xóa", "st-unknown"],
 };
 const statusInfo = (s) => STATUS[s] || STATUS.unknown;
 const ACTIVE = (s) => s === "running" || s === "queued";
@@ -487,8 +488,8 @@ function setElapsedCell(cell, s, nowMs) {
 }
 
 function matchStatus(s) {
-  if (sf.status === "all") return true;
-  if (sf.status === "other") return !["running", "queued", "complete", "error"].includes(s.status);
+  if (sf.status === "all") return s.status !== "deleted";  // notebook đã xóa chỉ hiện khi chọn riêng
+  if (sf.status === "other") return !["running", "queued", "complete", "error", "deleted"].includes(s.status);
   return s.status === sf.status;
 }
 function filtered() {

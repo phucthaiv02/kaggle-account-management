@@ -464,3 +464,55 @@ def test_database_error_during_store_is_shown_on_account(client, tmp_path, pg_ur
     assert refresh(client)["failed"] == 1
     err = client.get("/api/sessions").json()["accounts"][0]["sessions_error"]
     assert err and "schema.sql" in err
+
+
+def test_deleted_notebook_is_marked_when_listing_is_complete(client, tmp_path):
+    login(client); add(client, "acc1")
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": True, "items": [item("me/a", 1, "running"), item("me/b", 1, "complete")]})
+    refresh(client)
+    assert client.get("/api/accounts").json()[0]["running_sessions"] == 1
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": True, "items": [item("me/b", 1, "complete")]})  # me/a bị xóa
+    refresh(client)
+    st = {r["ref"]: r["status"] for r in rows(client)}
+    assert st == {"me/a": "deleted", "me/b": "complete"}
+    assert client.get("/api/accounts").json()[0]["running_sessions"] == 0  # không còn tính là đang chạy
+
+
+def test_truncated_or_empty_listing_does_not_mark_deleted(client, tmp_path):
+    login(client); add(client, "acc1")
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": True, "items": [item("me/a", 1, "running"), item("me/b", 1, "complete")]})
+    refresh(client)
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": False, "items": [item("me/b", 1, "complete")]})  # danh sách bị cắt
+    refresh(client)
+    assert {r["ref"]: r["status"] for r in rows(client)}["me/a"] == "running"
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": True, "items": []})  # rỗng: có thể là lỗi tạm thời
+    refresh(client)
+    assert {r["ref"]: r["status"] for r in rows(client)}["me/a"] == "running"
+
+
+def test_deleted_notebook_that_reappears_gets_real_status(client, tmp_path):
+    login(client); add(client, "acc1")
+    base = [item("me/b", 1, "complete")]
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": True, "items": [item("me/a", 1, "complete")] + base})
+    refresh(client)
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": True, "items": base}); refresh(client)
+    assert {r["ref"]: r["status"] for r in rows(client)}["me/a"] == "deleted"
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": True, "items": [item("me/a", 1, None)] + base}); refresh(client)
+    assert {r["ref"]: r["status"] for r in rows(client)}["me/a"] == "unknown"  # không giữ nhãn 'đã xóa'
+
+
+def test_merge_deleted_keys_uniform_and_idempotent():
+    now = "2026-10-26T01:00:00+00:00"
+    known = [{**{k: None for k in sessions.ROW_KEYS}, "account_id": 1, "ref": "me/gone", "version": 2, "status": "running"}]
+    out = sessions.merge(1, [item("me/x", 1)], known, now, complete=True)
+    gone = next(r for r in out if r["ref"] == "me/gone")
+    assert gone["status"] == "deleted" and all(set(r) == set(sessions.ROW_KEYS) for r in out)
+    again = sessions.merge(1, [item("me/x", 1)], [{**gone}], now, complete=True)
+    assert not any(r["ref"] == "me/gone" for r in again)  # đã đánh dấu rồi thì không ghi lại
+
+
+def test_collect_reports_listing_completeness():
+    api = FakeApi([meta("me/a")], {"me/a": ("COMPLETE",)})
+    assert kaggle_probe.collect(api, {"limit": 30}, meta_fn=lambda a, r, v: meta(r))["complete"] is True
+    api = FakeApi([meta("me/a"), meta("me/b")], {"me/a": ("COMPLETE",), "me/b": ("COMPLETE",)})
+    assert kaggle_probe.collect(api, {"limit": 2}, meta_fn=lambda a, r, v: meta(r))["complete"] is False

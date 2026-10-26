@@ -34,6 +34,7 @@ def probe_opts(known_rows: list[dict], limit: int, status_limit: int, duration_b
 
 def _row(account_id: int, it: dict, p: dict | None, now: str) -> dict:
     same_run = bool(p) and kaggle_probe._same_time(p.get("last_run_time"), it.get("last_run_time"))
+    same_run = same_run and p.get("status") != "deleted"  # notebook xuất hiện lại: không giữ trạng thái 'đã xóa'
     status = it.get("status") or (p["status"] if same_run else "unknown")
     got_status = it.get("status") is not None
     failure = it.get("failure_message") if got_status else (p.get("failure_message") if same_run else None)
@@ -56,9 +57,11 @@ def _row(account_id: int, it: dict, p: dict | None, now: str) -> dict:
     }
 
 
-def merge(account_id: int, items: list[dict], known_rows: list[dict], now: str) -> list[dict]:
+def merge(account_id: int, items: list[dict], known_rows: list[dict], now: str, complete: bool = False) -> list[dict]:
     """Trả về các hàng cần upsert: hàng mới/đổi của các notebook vừa liệt kê, cộng thêm các phiên bản cũ
-    đang ở trạng thái queued/running nhưng đã có phiên bản mới hơn (đã kết thúc, trạng thái cuối không rõ)."""
+    đang ở trạng thái queued/running nhưng đã có phiên bản mới hơn (đã kết thúc, trạng thái cuối không rõ).
+    Nếu `complete` (danh sách Kaggle trả về là toàn bộ, không bị cắt) thì notebook đã biết mà không còn trong danh sách
+    được đánh dấu 'deleted' (đã bị xóa hoặc không còn truy cập được); danh sách rỗng thì không kết luận gì."""
     prev = {(r["ref"], r["version"]): r for r in known_rows}
     out: dict[tuple, dict] = {}
     newest: dict[str, int] = {}
@@ -68,6 +71,11 @@ def merge(account_id: int, items: list[dict], known_rows: list[dict], now: str) 
         newest[it["ref"]] = max(newest.get(it["ref"], -1), it["version"])
     for r in known_rows:
         key = (r["ref"], r["version"])
+        if complete and items and r["ref"] not in newest and r["status"] != "deleted":
+            gone = {k: r.get(k) for k in ROW_KEYS}
+            gone.update(status="deleted", updated_at=now, status_changed_at=now)
+            out[key] = gone
+            continue
         if key in out or r["ref"] not in newest or r["version"] >= newest[r["ref"]] or r["status"] not in ACTIVE:
             continue
         stale = {k: r.get(k) for k in ROW_KEYS}
