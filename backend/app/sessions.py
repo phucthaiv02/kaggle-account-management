@@ -38,6 +38,8 @@ def _row(account_id: int, it: dict, p: dict | None, now: str) -> dict:
     status = it.get("status") or (p["status"] if same_run else "unknown")
     got_status = it.get("status") is not None
     failure = it.get("failure_message") if got_status else (p.get("failure_message") if same_run else None)
+    if it.get("status_error") and not got_status:  # hiện lý do không lấy được trạng thái thay vì im lặng
+        failure = "Không lấy được trạng thái: " + it["status_error"]
     dur = it.get("duration_seconds")
     if dur is None and same_run:
         dur = p.get("duration_seconds")

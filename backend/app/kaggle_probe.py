@@ -81,6 +81,24 @@ def _ref(k) -> str:
     return f"{k.author}/{getattr(k, 'slug', '') or ref}"
 
 
+def _build_item(k):
+    ref, version, lrt = _ref(k), int(k.current_version_number or 0), _iso(k.last_run_time)
+    shape = k.machine_shape or ""
+    it = {
+        "ref": ref, "version": version, "title": k.title or ref.split("/")[-1], "author": k.author or "",
+        "last_run_time": lrt, "accelerator": classify_accelerator(bool(k.enable_gpu), bool(k.enable_tpu), shape),
+        "machine_shape": shape, "accelerator_checked": False, "docker_image": k.docker_image or "",
+        "enable_internet": bool(k.enable_internet), "is_private": bool(k.is_private),
+        "kernel_type": k.kernel_type or "", "language": k.language or "", "total_votes": int(k.total_votes or 0),
+        "competitions": [str(x) for x in (k.competition_data_sources or [])],
+        "datasets": [str(x) for x in (k.dataset_data_sources or [])],
+        "models": [str(x) for x in (k.model_data_sources or [])],
+        "kernel_sources": [str(x) for x in (k.kernel_data_sources or [])],
+        "status": None, "failure_message": None, "duration_seconds": None,
+    }
+    return ref, version, lrt, shape, it
+
+
 def collect(api, opts: dict, clock=time.monotonic, meta_fn=fetch_meta) -> dict:
     limit = max(1, min(int(opts.get("limit", 30)), 100))
     status_limit = int(opts.get("status_limit", 20))
@@ -90,22 +108,13 @@ def collect(api, opts: dict, clock=time.monotonic, meta_fn=fetch_meta) -> dict:
     known = opts.get("known") or {}  # ref -> hàng mới nhất đã biết của notebook đó
 
     kernels = api.kernels_list(page=1, page_size=limit, mine=True, sort_by="dateRun") or []
-    items, partial = [], False
+    items, partial, bad = [], False, []
     for idx, k in enumerate(kernels):
-        ref, version, lrt = _ref(k), int(k.current_version_number or 0), _iso(k.last_run_time)
-        shape = k.machine_shape or ""
-        it = {
-            "ref": ref, "version": version, "title": k.title or ref.split("/")[-1], "author": k.author or "",
-            "last_run_time": lrt, "accelerator": classify_accelerator(bool(k.enable_gpu), bool(k.enable_tpu), shape),
-            "machine_shape": shape, "accelerator_checked": False, "docker_image": k.docker_image or "",
-            "enable_internet": bool(k.enable_internet), "is_private": bool(k.is_private),
-            "kernel_type": k.kernel_type or "", "language": k.language or "", "total_votes": int(k.total_votes or 0),
-            "competitions": [str(x) for x in (k.competition_data_sources or [])],
-            "datasets": [str(x) for x in (k.dataset_data_sources or [])],
-            "models": [str(x) for x in (k.model_data_sources or [])],
-            "kernel_sources": [str(x) for x in (k.kernel_data_sources or [])],
-            "status": None, "failure_message": None, "duration_seconds": None,
-        }
+        try:
+            ref, version, lrt, shape, it = _build_item(k)
+        except (Exception, SystemExit) as e:  # một notebook hỏng/đã xóa dở dang không được làm hỏng cả lần quét
+            bad.append(f"{getattr(k, 'ref', '?')}: {str(e)[:120]}")
+            continue
         if it["accelerator"] != "cpu":  # danh sách đã báo rõ GPU/TPU
             it["accelerator_checked"] = True
         kn = known.get(ref)
@@ -126,6 +135,9 @@ def collect(api, opts: dict, clock=time.monotonic, meta_fn=fetch_meta) -> dict:
                     it["failure_message"] = st.failure_message or None
                 except (Exception, SystemExit) as e:  # một notebook lỗi không làm hỏng cả danh sách
                     it["status_error"] = str(e)[:200]
+                    low = it["status_error"].lower()
+                    if "404" in low or "not found" in low or "does not exist" in low:
+                        it["status"] = "deleted"  # Kaggle không còn tìm thấy notebook này
         items.append(it)
 
     # Danh sách chỉ nói "không GPU/TPU" có thể do thiếu dữ liệu: hỏi metadata từng phiên bản để chắc chắn
@@ -165,7 +177,7 @@ def collect(api, opts: dict, clock=time.monotonic, meta_fn=fetch_meta) -> dict:
     except Exception:
         user = None
     # Chỉ lấy trang 1: nếu số notebook trả về ít hơn giới hạn thì đó là toàn bộ danh sách hiện có trên Kaggle
-    return {"user": user, "listed": len(kernels), "complete": len(kernels) < limit, "partial": partial, "items": items}
+    return {"user": user, "listed": len(kernels), "complete": len(kernels) < limit, "partial": partial, "items": items, "bad": bad}
 
 
 _SUB_STATUS = {0: "pending", 1: "complete", 2: "error"}

@@ -516,3 +516,38 @@ def test_collect_reports_listing_completeness():
     assert kaggle_probe.collect(api, {"limit": 30}, meta_fn=lambda a, r, v: meta(r))["complete"] is True
     api = FakeApi([meta("me/a"), meta("me/b")], {"me/a": ("COMPLETE",), "me/b": ("COMPLETE",)})
     assert kaggle_probe.collect(api, {"limit": 2}, meta_fn=lambda a, r, v: meta(r))["complete"] is False
+
+
+def test_one_broken_kernel_does_not_break_the_scan():
+    class Bad:
+        ref = "me/broken"
+        @property
+        def current_version_number(self):
+            raise RuntimeError("metadata hỏng")
+
+    api = FakeApi([meta("me/a"), Bad(), meta("me/c")], {"me/a": ("COMPLETE",), "me/c": ("COMPLETE",)})
+    out = kaggle_probe.collect(api, {}, meta_fn=lambda a, r, v: meta(r))
+    assert [i["ref"] for i in out["items"]] == ["me/a", "me/c"] and "me/broken" in out["bad"][0]
+
+
+def test_status_404_marks_notebook_deleted_and_other_errors_are_visible(client, tmp_path):
+    api = FakeApi([meta("me/gone"), meta("me/flaky")],
+                  {"me/gone": RuntimeError("404 Client Error: Not Found"), "me/flaky": RuntimeError("503 busy")})
+    out = kaggle_probe.collect(api, {}, meta_fn=lambda a, r, v: meta(r))
+    st = {i["ref"]: i["status"] for i in out["items"]}
+    assert st == {"me/gone": "deleted", "me/flaky": None}
+    login(client); add(client, "acc1")
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": True, "items": out["items"]})
+    refresh(client)
+    r = {x["ref"]: x for x in rows(client)}
+    assert r["me/gone"]["status"] == "deleted"
+    assert r["me/flaky"]["status"] == "unknown" and "503 busy" in r["me/flaky"]["failure_message"]
+
+
+def test_bad_kernel_in_listing_prevents_false_deletion(client, tmp_path):
+    login(client); add(client, "acc1")
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": True, "items": [item("me/a", 1, "running"), item("me/b", 1, "complete")]})
+    refresh(client)
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": True, "bad": ["me/a: lỗi"], "items": [item("me/b", 1, "complete")]})
+    refresh(client)
+    assert {r["ref"]: r["status"] for r in rows(client)}["me/a"] == "running"  # a bị bỏ qua do lỗi, không phải bị xóa
