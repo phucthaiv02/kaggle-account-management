@@ -160,6 +160,26 @@ def collect(api, opts: dict, clock=time.monotonic, meta_fn=fetch_meta) -> dict:
         if not it["accelerator_checked"]:
             it["accelerator"] = "unknown"  # chưa xác minh được: không khẳng định là CPU
 
+    # Notebook đã lưu là đang chạy/chờ nhưng không còn trong danh sách (đã xóa, hoặc nằm ngoài trang đầu): hỏi thẳng Kaggle
+    listed_refs = {i["ref"] for i in items}
+    rechecked = {}
+    for ref in list(opts.get("recheck") or [])[: int(opts.get("recheck_limit", 15))]:
+        if ref in listed_refs:
+            continue
+        if clock() >= deadline:
+            partial = True
+            break
+        try:
+            st = api.kernels_status(ref)
+            rechecked[ref] = {"status": getattr(st.status, "name", str(st.status)).lower(),
+                              "failure_message": st.failure_message or None}
+        except (Exception, SystemExit) as e:
+            low = str(e).lower()
+            if "404" in low or "not found" in low or "does not exist" in low:
+                rechecked[ref] = {"status": "deleted", "failure_message": None}
+            else:
+                rechecked[ref] = {"error": str(e)[:200]}
+
     tried = 0
     for it in items:  # ước tính thời lượng cho vài phiên đã kết thúc chưa có số liệu
         if tried >= duration_budget or clock() >= deadline:
@@ -177,7 +197,7 @@ def collect(api, opts: dict, clock=time.monotonic, meta_fn=fetch_meta) -> dict:
     except Exception:
         user = None
     # Chỉ lấy trang 1: nếu số notebook trả về ít hơn giới hạn thì đó là toàn bộ danh sách hiện có trên Kaggle
-    return {"user": user, "listed": len(kernels), "complete": len(kernels) < limit, "partial": partial, "items": items, "bad": bad}
+    return {"user": user, "listed": len(kernels), "complete": len(kernels) < limit, "partial": partial, "items": items, "bad": bad, "rechecked": rechecked}
 
 
 _SUB_STATUS = {0: "pending", 1: "complete", 2: "error"}

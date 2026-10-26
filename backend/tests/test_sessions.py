@@ -551,3 +551,44 @@ def test_bad_kernel_in_listing_prevents_false_deletion(client, tmp_path):
     set_scenario(tmp_path, "token-aaaaaaaa", {"complete": True, "bad": ["me/a: lỗi"], "items": [item("me/b", 1, "complete")]})
     refresh(client)
     assert {r["ref"]: r["status"] for r in rows(client)}["me/a"] == "running"  # a bị bỏ qua do lỗi, không phải bị xóa
+
+
+def test_probe_opts_lists_active_refs_for_recheck():
+    rows_ = [{"ref": "me/a", "version": 1, "status": "running"}, {"ref": "me/a", "version": 2, "status": "complete"},
+             {"ref": "me/b", "version": 1, "status": "queued"}, {"ref": "me/c", "version": 1, "status": "complete"}]
+    assert sorted(sessions.probe_opts(rows_, 30, 20, 3, 20)["recheck"]) == ["me/b"]  # chỉ phiên bản mới nhất, chỉ đang hoạt động
+
+
+def test_collect_rechecks_active_refs_missing_from_listing():
+    api = FakeApi([meta("me/listed")], {
+        "me/listed": ("COMPLETE",), "me/gone": RuntimeError("404 Not Found"), "me/done": ("COMPLETE",),
+        "me/flaky": RuntimeError("503 busy"),
+    })
+    out = kaggle_probe.collect(api, {"recheck": ["me/listed", "me/gone", "me/done", "me/flaky"]}, meta_fn=lambda a, r, v: meta(r))
+    assert "me/listed" not in out["rechecked"]  # đã có trong danh sách: không hỏi lại
+    assert out["rechecked"]["me/gone"]["status"] == "deleted" and out["rechecked"]["me/done"]["status"] == "complete"
+    assert "503" in out["rechecked"]["me/flaky"]["error"]
+
+
+def test_long_listing_stale_running_rows_get_resolved_via_recheck(client, tmp_path):
+    login(client); add(client, "acc1")
+    # 1) hai notebook đang chạy; 2) danh sách bị cắt (complete=False) và không còn me/gone, me/done nữa
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": False, "items": [
+        item("me/gone", 1, "running"), item("me/done", 1, "running"), item("me/keep", 1, "running")]})
+    refresh(client)
+    set_scenario(tmp_path, "token-aaaaaaaa", {"complete": False, "items": [item("me/keep", 1, "running")],
+        "rechecked": {"me/gone": {"status": "deleted"}, "me/done": {"status": "complete"}}})
+    refresh(client)
+    st = {r["ref"]: r["status"] for r in rows(client)}
+    assert st == {"me/gone": "deleted", "me/done": "complete", "me/keep": "running"}
+    assert client.get("/api/accounts").json()[0]["running_sessions"] == 1
+    log = [json.loads(l) for l in (tmp_path / "probe.log").read_text().splitlines()]
+    assert sorted(log[1]["opts"]["recheck"]) == ["me/done", "me/gone", "me/keep"]
+
+
+def test_recheck_error_is_shown_not_silent():
+    now = "2026-10-26T01:00:00+00:00"
+    known = [{**{k: None for k in sessions.ROW_KEYS}, "account_id": 1, "ref": "me/x", "version": 1, "status": "running"}]
+    out = sessions.merge(1, [item("me/y", 1)], known, now, rechecked={"me/x": {"error": "503 busy"}})
+    x = next(r for r in out if r["ref"] == "me/x")
+    assert x["status"] == "running" and "503 busy" in x["failure_message"]

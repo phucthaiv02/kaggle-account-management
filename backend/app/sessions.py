@@ -26,8 +26,9 @@ def probe_opts(known_rows: list[dict], limit: int, status_limit: int, duration_b
                               "accelerator", "accelerator_checked", "machine_shape")}
         for ref, r in latest.items()
     }
+    recheck = [ref for ref, r in latest.items() if r.get("status") in ACTIVE]
     return {
-        "limit": limit, "status_limit": status_limit, "duration_budget": duration_budget,
+        "recheck": recheck, "limit": limit, "status_limit": status_limit, "duration_budget": duration_budget,
         "deadline_seconds": deadline, "accel_budget": accel_budget, "known": known,
     }
 
@@ -59,7 +60,8 @@ def _row(account_id: int, it: dict, p: dict | None, now: str) -> dict:
     }
 
 
-def merge(account_id: int, items: list[dict], known_rows: list[dict], now: str, complete: bool = False) -> list[dict]:
+def merge(account_id: int, items: list[dict], known_rows: list[dict], now: str, complete: bool = False,
+          rechecked: dict | None = None) -> list[dict]:
     """Trả về các hàng cần upsert: hàng mới/đổi của các notebook vừa liệt kê, cộng thêm các phiên bản cũ
     đang ở trạng thái queued/running nhưng đã có phiên bản mới hơn (đã kết thúc, trạng thái cuối không rõ).
     Nếu `complete` (danh sách Kaggle trả về là toàn bộ, không bị cắt) thì notebook đã biết mà không còn trong danh sách
@@ -71,8 +73,23 @@ def merge(account_id: int, items: list[dict], known_rows: list[dict], now: str, 
         key = (it["ref"], it["version"])
         out[key] = _row(account_id, it, prev.get(key), now)
         newest[it["ref"]] = max(newest.get(it["ref"], -1), it["version"])
+    rechecked = rechecked or {}
+    top = {}
+    for r in known_rows:
+        top[r["ref"]] = max(top.get(r["ref"], -1), r["version"])
     for r in known_rows:
         key = (r["ref"], r["version"])
+        rc = rechecked.get(r["ref"])
+        if rc and r["ref"] not in newest and r["version"] == top[r["ref"]] and key not in out:
+            row = {k: r.get(k) for k in ROW_KEYS}
+            if rc.get("status"):
+                if rc["status"] != r["status"]:
+                    row["status_changed_at"] = now
+                row.update(status=rc["status"], failure_message=rc.get("failure_message"), updated_at=now)
+            else:
+                row.update(failure_message="Không lấy được trạng thái: " + rc.get("error", ""), updated_at=now)
+            out[key] = row
+            continue
         if complete and items and r["ref"] not in newest and r["status"] != "deleted":
             gone = {k: r.get(k) for k in ROW_KEYS}
             gone.update(status="deleted", updated_at=now, status_changed_at=now)

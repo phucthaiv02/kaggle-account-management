@@ -306,7 +306,7 @@ async def refresh_sessions_account(acc: dict, budget_end: float, sem: asyncio.Se
         if res.get("error"):
             raise kc.KaggleError(res["error"])
         rows = sessions.merge(acc["id"], res.get("items", []), known, db.iso(db.utcnow()),
-                              bool(res.get("complete")) and not res.get("bad"))
+                              bool(res.get("complete")) and not res.get("bad"), res.get("rechecked"))
         await asyncio.to_thread(_store_sessions, acc["id"], rows)
     except Exception as e:  # mọi lỗi (Kaggle, database, giải mã token...) đều phải hiện ở thanh tài khoản
         msg = str(e) or type(e).__name__

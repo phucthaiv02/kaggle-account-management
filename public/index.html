@@ -482,7 +482,7 @@ function setElapsedCell(cell, s, nowMs) {
   if (!ACTIVE(s.status) && sec != null) cell.append(el("div", "sub", "ước tính từ log"));
   if (s.status === "running" && sec != null) {
     const lim = limitHours(s) * 3600;
-    if (sec >= lim) cell.append(el("div", "warnt", `⚠ đã quá giới hạn ${limitHours(s)} giờ`));
+    if (sec >= lim) cell.append(el("div", "warnt", `⚠ đã quá giới hạn ${limitHours(s)} giờ, có thể đã dừng hoặc bị xóa, hãy làm mới`));
     else if (sec >= lim * 0.8) cell.append(el("div", "warnt", `⚠ gần giới hạn ${limitHours(s)} giờ`));
   }
 }
