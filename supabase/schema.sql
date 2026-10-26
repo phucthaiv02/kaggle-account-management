@@ -154,5 +154,39 @@ revoke all on sequence public.competition_entries_id_seq, public.submissions_id_
 grant select, insert, update, delete on public.competition_entries, public.submissions to service_role;
 grant usage, select on sequence public.competition_entries_id_seq, public.submissions_id_seq to service_role;
 
+-- ---------- Tóm tắt chat Discord (chỉ lưu bản tóm tắt, không lưu tin nhắn gốc) ----------
+create table if not exists public.discord_sources (
+    id              bigserial primary key,
+    channel_id      text not null unique,               -- Channel ID của Discord
+    name            text,
+    guild_id        text,
+    last_message_id text,                               -- mốc tin nhắn đã tóm tắt đến đâu
+    last_summarized_at timestamptz,
+    last_error      text,
+    created_at      timestamptz not null default now()
+);
+
+create table if not exists public.discord_summaries (
+    id              bigserial primary key,
+    source_id       bigint not null references public.discord_sources(id) on delete cascade,
+    period_start    timestamptz,
+    period_end      timestamptz,
+    message_count   integer not null default 0,
+    truncated       boolean not null default false,     -- còn tin nhắn chưa tóm tắt do chạm giới hạn
+    participants    jsonb not null default '[]'::jsonb, -- [{alias,name,count}]: để hiện tên thật thay cho bí danh
+    content         jsonb not null default '{}'::jsonb, -- overview, topics, decisions, action_items, open_questions, links
+    model           text,
+    anonymized      boolean not null default true,
+    created_at      timestamptz not null default now()
+);
+create index if not exists idx_ds_source on public.discord_summaries(source_id, created_at desc);
+
+alter table public.discord_sources enable row level security;
+alter table public.discord_summaries enable row level security;
+revoke all on public.discord_sources, public.discord_summaries from anon, authenticated;
+revoke all on sequence public.discord_sources_id_seq, public.discord_summaries_id_seq from anon, authenticated;
+grant select, insert, update, delete on public.discord_sources, public.discord_summaries to service_role;
+grant usage, select on sequence public.discord_sources_id_seq, public.discord_summaries_id_seq to service_role;
+
 -- Báo cho Data API nạp lại danh sách bảng
 notify pgrst, 'reload schema';

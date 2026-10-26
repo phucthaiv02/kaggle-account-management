@@ -16,7 +16,8 @@ from psycopg import errors, sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-TABLES = {"accounts", "quota_snapshots", "login_fails", "kernel_sessions", "competition_entries", "submissions"}
+TABLES = {"accounts", "quota_snapshots", "login_fails", "kernel_sessions", "competition_entries", "submissions",
+          "discord_sources", "discord_summaries"}
 OPS = {"eq": "=", "lt": "<", "gt": ">", "lte": "<=", "gte": ">="}
 RESERVED = {"select", "order", "limit", "offset", "on_conflict"}
 

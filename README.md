@@ -62,6 +62,27 @@ uvicorn backend.app.main:app --reload
 
 Mở http://localhost:8000. Chạy kiểm thử: `python -m pytest backend/tests`. Bộ test tự khởi động một Postgres cục bộ, chạy đúng `supabase/schema.sql` và dùng một bản giả lập Data API tối thiểu (không phải PostgREST thật), nên không cần tài khoản Supabase.
 
+## Tóm tắt chat Discord (tab Discord)
+
+App đọc tin nhắn một kênh Discord bằng **bot chính thức** rồi tóm tắt bằng **Gemini API miễn phí** (Google AI Studio). Bấm nút mới chạy (không có cron); kết quả gồm tổng quan, chủ đề, quyết định, việc cần làm, câu hỏi còn mở, liên kết.
+
+**Thiết lập (một lần):**
+1. Mở [Discord Developer Portal](https://discord.com/developers/applications) → **New Application** → tab **Bot** → bật **Message Content Intent** (bắt buộc, nếu không Discord trả nội dung rỗng) → **Reset Token** và copy.
+2. Tab **OAuth2 → URL Generator**: scope `bot`; quyền **View Channels** và **Read Message History** (không cần quyền nào khác). Mở URL sinh ra để mời bot vào server (cần quyền quản lý server hoặc nhờ admin).
+3. Lấy khóa miễn phí tại [Google AI Studio](https://aistudio.google.com/apikey).
+4. Trên Vercel thêm `DISCORD_BOT_TOKEN` và `GEMINI_API_KEY` rồi Redeploy; chạy lại `supabase/schema.sql` (thêm 2 bảng `discord_sources`, `discord_summaries`).
+5. Trong Discord bật Developer Mode, chuột phải kênh → Copy Channel ID, rồi bấm "Thêm kênh Discord" trong app.
+
+Không có cách hợp lệ nào để đọc chat tự động mà không dùng bot. Không dùng token tài khoản cá nhân (self-bot): vi phạm điều khoản Discord và có thể bị khóa tài khoản.
+
+**Riêng tư, đọc kỹ:**
+- App **chỉ lưu bản tóm tắt**, không lưu tin nhắn gốc.
+- Khi tóm tắt, nội dung chat vẫn được gửi tới Google. Với gói Gemini **miễn phí**, [điều khoản của Google](https://ai.google.dev/terms) cho phép dùng nội dung đó để cải thiện sản phẩm và người có thể đọc lại, và khuyên không gửi thông tin nhạy cảm hay cá nhân. (Người dùng ở EEA, Thụy Sĩ, Anh được áp điều khoản của gói trả phí.)
+- Giảm thiểu: tên thành viên được thay bằng bí danh `Member_N`, email, số điện thoại và token dạng Discord bị che trước khi gửi; giao diện đổi bí danh về tên thật chỉ ở trình duyệt. Tắt bằng `DISCORD_ANONYMIZE=0`. **Chỉ là cố gắng**: tên hay thông tin riêng tư tự viết trong nội dung tin nhắn thì không che được.
+- Chỉ thêm kênh mà thành viên biết có bot tóm tắt và đồng ý; tránh kênh có nội dung nhạy cảm. Muốn dữ liệu không dùng để huấn luyện, dùng Gemini API có bật thanh toán.
+
+**Cách hoạt động và giới hạn:** "Tóm tắt từ lần trước" chỉ lấy tin nhắn mới sau mốc đã tóm tắt (lần đầu lấy 24 giờ); lỗi giữa chừng không làm mất tin. Mỗi lần lấy tối đa `DISCORD_MAX_MESSAGES` (1500) tin và `DISCORD_MAX_CHARS` (150000) ký tự; vượt thì bản tóm tắt ghi "chưa tóm tắt hết" và bấm tiếp để đi tiếp. Gói miễn phí có hạn mức theo phút và theo ngày; hết thì app báo và bạn thử lại sau. Mô hình mặc định `gemini-3.5-flash-lite`, đổi bằng `GEMINI_MODEL` nếu Google đổi tên mô hình. Hình ảnh và nội dung trong tệp đính kèm không được đọc (chỉ ghi tên tệp). Bản tóm tắt cũ hơn 180 ngày tự bị xóa.
+
 ## Giới hạn và lưu ý
 
 - **`maxDuration`**: `vercel.json` đặt 60 giây cho function; `REFRESH_BUDGET_SECONDS` phải nhỏ hơn giá trị này. Nếu gói Vercel của bạn giới hạn thấp hơn, hạ cả hai và bấm "Làm mới tất cả" nhiều lần khi có nhiều tài khoản.
@@ -94,3 +115,7 @@ Mở http://localhost:8000. Chạy kiểm thử: `python -m pytest backend/tests
 | POST | `/api/sessions/refresh` | Quét lại sessions (có giới hạn thời gian) |
 | GET | `/api/submissions` | Competition còn hạn + submission + trạng thái quét từng tài khoản |
 | POST | `/api/submissions/refresh` | Quét lại submission (có giới hạn thời gian) |
+| GET | `/api/discord` | Kênh, bản tóm tắt, trạng thái cấu hình Discord/Gemini |
+| POST, DELETE | `/api/discord/sources`, `/api/discord/sources/{id}` | Thêm / xóa kênh |
+| POST | `/api/discord/sources/{id}/summarize` | Tóm tắt (`{"mode":"since_last"}` hoặc `{"mode":"hours","hours":24}`) |
+| DELETE | `/api/discord/summaries/{id}` | Xóa một bản tóm tắt |

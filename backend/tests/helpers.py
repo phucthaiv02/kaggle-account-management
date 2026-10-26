@@ -12,7 +12,7 @@ API_KEY = "sb_secret_test_key_123"
 FAKE_KAGGLE = r'''
 import json, os, sys
 # Tiến trình con không được thấy bí mật của ứng dụng
-for k in ("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SECRET_KEY", "ADMIN_PASSWORD", "DATABASE_URL"):
+for k in ("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SECRET_KEY", "ADMIN_PASSWORD", "DATABASE_URL", "DISCORD_BOT_TOKEN", "GEMINI_API_KEY"):
     if k in os.environ:
         sys.stderr.write("LEAK " + k); sys.exit(3)
 if "kg_" not in os.environ.get("HOME", ""):
@@ -35,7 +35,7 @@ elif args[:2] == ["kernels", "list"]:
 # vào FAKE_PROBE_LOG (mỗi dòng một JSON) để test kiểm tra.
 FAKE_PROBE = r'''
 import json, os, sys
-for k in ("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SECRET_KEY", "ADMIN_PASSWORD", "DATABASE_URL"):
+for k in ("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SECRET_KEY", "ADMIN_PASSWORD", "DATABASE_URL", "DISCORD_BOT_TOKEN", "GEMINI_API_KEY"):
     if k in os.environ:
         sys.stderr.write("LEAK " + k); sys.exit(3)
 if "kg_" not in os.environ.get("HOME", ""):

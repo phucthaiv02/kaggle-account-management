@@ -7,9 +7,12 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
+import re
+from datetime import datetime, timedelta, timezone
+
 from pydantic import BaseModel, Field
 
-from . import auth, db, sessions
+from . import auth, db, discord_summary as ds, sessions
 from . import kaggle_client as kc
 from .crypto import decrypt, encrypt
 from .db import Conflict, DBError, eq
@@ -464,6 +467,105 @@ def list_submissions():
 @app.post("/api/submissions/refresh", dependencies=[Depends(require_auth)])
 async def refresh_submissions():
     return await refresh_submissions_all()
+
+
+# ---------- Tóm tắt chat Discord ----------
+class SourceIn(BaseModel):
+    channel_id: str = Field(min_length=1, max_length=40)
+
+
+class SummarizeIn(BaseModel):
+    mode: str = "since_last"  # since_last | hours
+    hours: int = Field(default=24, ge=1, le=168)
+
+
+def _discord_http(e: Exception) -> HTTPException:
+    return HTTPException(503 if isinstance(e, ds.NotConfigured) else 400, str(e))
+
+
+@app.get("/api/discord", dependencies=[Depends(require_auth)])
+def discord_overview():
+    sources = db.select("discord_sources", "*", order="created_at.asc")
+    summaries = db.select("discord_summaries", "*", order="created_at.desc", limit=300)
+    return {"config": ds.config_status(), "sources": sources, "summaries": summaries}
+
+
+@app.post("/api/discord/sources", status_code=201, dependencies=[Depends(require_auth)])
+async def discord_add_source(body: SourceIn):
+    cid = body.channel_id.strip()
+    if not re.fullmatch(r"\d{15,25}", cid):
+        raise HTTPException(400, "Channel ID phải là dãy số dài (bật Developer Mode trong Discord rồi chuột phải kênh → Copy Channel ID).")
+    try:
+        ch = await asyncio.to_thread(ds.get_channel, cid)
+    except ds.DiscordError as e:
+        raise _discord_http(e)
+    try:
+        return await asyncio.to_thread(
+            db.insert, "discord_sources", {"channel_id": ch["channel_id"], "name": ch["name"], "guild_id": ch["guild_id"]}
+        )
+    except Conflict:
+        raise HTTPException(409, "Kênh này đã được thêm.")
+
+
+@app.delete("/api/discord/sources/{source_id}", status_code=204, dependencies=[Depends(require_auth)])
+def discord_delete_source(source_id: int):
+    if not db.delete("discord_sources", {"id": eq(source_id)}):
+        raise HTTPException(404, "Không tìm thấy kênh.")
+    return Response(status_code=204)
+
+
+def _summarize_sync(src: dict, mode: str, hours: int) -> dict:
+    cursor = src.get("last_message_id")
+    if mode == "since_last" and cursor:
+        after = cursor
+    else:
+        hours = hours if mode == "hours" else 24
+        after = ds.snowflake_from_time(datetime.now(timezone.utc) - timedelta(hours=hours))
+    msgs, fetch_trunc = ds.fetch_messages(src["channel_id"], after)
+    tr = ds.build_transcript(msgs, ds.anonymize_enabled())
+    now = db.iso(db.utcnow())
+
+    def advance():
+        if tr["last_id"]:
+            new = max(int(cursor or 0), int(tr["last_id"]))
+            db.update("discord_sources", {"id": eq(src["id"])},
+                      {"last_message_id": str(new), "last_error": None, "last_summarized_at": now})
+
+    if tr["count"] == 0:
+        advance()
+        return {"empty": True, "fetched": len(msgs)}
+    content = ds.gemini_summarize(tr["text"], src.get("name") or "kênh", tr["start"], tr["end"])  # lỗi → không đẩy mốc
+    row = db.insert("discord_summaries", {
+        "source_id": src["id"], "period_start": tr["start"], "period_end": tr["end"], "message_count": tr["count"],
+        "truncated": bool(fetch_trunc or tr["chars_truncated"]), "participants": tr["participants"],
+        "content": content, "model": ds.model_name(), "anonymized": ds.anonymize_enabled(),
+    })
+    advance()
+    db.delete("discord_summaries", {"source_id": eq(src["id"]), "created_at": f"lt.{db.ago(days=180)}"})
+    return {"empty": False, "summary": row}
+
+
+@app.post("/api/discord/sources/{source_id}/summarize", dependencies=[Depends(require_auth)])
+async def discord_summarize(source_id: int, body: SummarizeIn):
+    rows = await asyncio.to_thread(db.select, "discord_sources", "*", {"id": eq(source_id)})
+    if not rows:
+        raise HTTPException(404, "Không tìm thấy kênh.")
+    try:
+        return await asyncio.to_thread(_summarize_sync, rows[0], body.mode, body.hours)
+    except ds.DiscordError as e:
+        if not isinstance(e, ds.NotConfigured):
+            try:
+                await asyncio.to_thread(db.update, "discord_sources", {"id": eq(source_id)}, {"last_error": str(e)[:300]})
+            except Exception:
+                pass
+        raise _discord_http(e)
+
+
+@app.delete("/api/discord/summaries/{summary_id}", status_code=204, dependencies=[Depends(require_auth)])
+def discord_delete_summary(summary_id: int):
+    if not db.delete("discord_summaries", {"id": eq(summary_id)}):
+        raise HTTPException(404, "Không tìm thấy bản tóm tắt.")
+    return Response(status_code=204)
 
 
 # ---------- frontend ----------

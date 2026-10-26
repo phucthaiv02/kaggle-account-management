@@ -102,6 +102,13 @@
   .pager button { padding: 4px 10px; font-size: 13px; }
   .pager select { padding: 4px 8px; font-size: 13px; }
   .pager .sp { flex: 1; }
+  .sumcard { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .sumcard h4 { margin: 14px 0 4px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+  .sumcard ul { margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.5; }
+  .sumcard .ov { font-size: 15px; line-height: 1.55; margin: 8px 0 0; white-space: pre-wrap; }
+  .sumcard .meta { font-size: 12px; color: var(--muted); }
+  .srcact { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  .srcact button, .srcact select { padding: 4px 10px; font-size: 13px; }
   .h2 { font-size: 16px; margin: 22px 0 10px; }
   .st-pending { color: var(--warn); background: rgba(217,138,0,.14); }
   .st-pending::before { animation: pulse 1.4s infinite; }
@@ -130,6 +137,7 @@
       <a href="#/accounts" id="navAcc">Tài khoản</a>
       <a href="#/sessions" id="navSes">Sessions</a>
       <a href="#/submissions" id="navSub">Submissions</a>
+      <a href="#/discord" id="navDis">Discord</a>
     </nav>
     <span class="spacer"></span>
     <span id="actAcc" class="row">
@@ -141,6 +149,9 @@
     </span>
     <span id="actSub" class="row hidden">
       <button id="btnRefreshSub" class="primary">Làm mới submissions</button>
+    </span>
+    <span id="actDis" class="row hidden">
+      <button id="btnAddChan" class="primary">+ Thêm kênh Discord</button>
     </span>
     <button id="btnLogout">Đăng xuất</button>
   </header>
@@ -249,8 +260,48 @@
         không xếp hạng điểm, chỉ hiển thị nguyên văn.
       </div>
     </div>
+
+    <!-- Trang Discord -->
+    <div id="viewDis" class="hidden">
+      <div id="dNotice" class="hidden" style="margin-bottom:12px;font-size:14px"></div>
+      <div id="dSetup" class="card hidden" style="margin-bottom:14px;font-size:14px;line-height:1.55"></div>
+      <div class="card" style="margin-bottom:14px;font-size:13px;line-height:1.55">
+        <b>Riêng tư:</b> app chỉ lưu bản tóm tắt, không lưu tin nhắn gốc. Khi tóm tắt, nội dung chat được gửi tới Gemini API;
+        với gói <b>miễn phí</b>, Google có thể dùng nội dung đó để cải thiện sản phẩm và người có thể đọc lại. Vì vậy tên thành viên được
+        thay bằng bí danh, email, số điện thoại và token bị che trước khi gửi (chỉ là biện pháp cố gắng, không che được thông tin viết
+        trong lời nhắn). Chỉ thêm kênh mà các thành viên biết và đồng ý, và tránh kênh có nội dung nhạy cảm.
+      </div>
+      <h2 class="h2">Kênh</h2>
+      <div id="dSources" class="grid"></div>
+      <div id="dSrcEmpty" class="empty hidden">Chưa có kênh nào. Bấm "Thêm kênh Discord".</div>
+      <h2 class="h2">Bản tóm tắt</h2>
+      <div class="toolbar">
+        <select id="dFilter" aria-label="Lọc theo kênh"></select>
+        <span class="sub" id="dCount"></span>
+      </div>
+      <div id="dList"></div>
+      <div id="dPager" class="pager"></div>
+      <div id="dEmpty" class="empty hidden">Chưa có bản tóm tắt nào.</div>
+    </div>
   </main>
 </div>
+
+<dialog id="dlgChan">
+  <form method="dialog" id="chanForm">
+    <h3 style="margin:0 0 4px">Thêm kênh Discord</h3>
+    <label for="chanId">Channel ID</label>
+    <input id="chanId" inputmode="numeric" autocomplete="off" required placeholder="vd: 123456789012345678">
+    <div class="sub" style="margin-top:8px;line-height:1.5">
+      Discord → Cài đặt người dùng → Nâng cao → bật <b>Developer Mode</b>, rồi chuột phải vào kênh → <b>Copy Channel ID</b>.
+      Bot phải đã được mời vào server và có quyền xem kênh + đọc lịch sử tin nhắn.
+    </div>
+    <div id="chanErr" class="err"></div>
+    <menu>
+      <button type="button" id="chanCancel">Hủy</button>
+      <button class="primary" id="chanSave" value="save">Thêm</button>
+    </menu>
+  </form>
+</dialog>
 
 <dialog id="dlgAccount">
   <form method="dialog" id="accForm">
@@ -334,7 +385,7 @@ const PAIR = /^([\w.-]+)\/([\w.-]+)$/, SLUG = /^[A-Za-z0-9][\w.-]*$/;
 // ---------- phân trang (ở phía trình duyệt) ----------
 const PAGE_SIZES = [10, 25, 50, 100];
 function loadPageSize() { try { const n = +localStorage.getItem("kam_page_size"); return PAGE_SIZES.includes(n) ? n : 25; } catch { return 25; } }
-const pg = { size: loadPageSize(), sessions: 1, comps: 1, subs: 1 };
+const pg = { size: loadPageSize(), sessions: 1, comps: 1, subs: 1, disc: 1 };
 // Trả về lát cắt của list cho trang hiện tại và vẽ thanh phân trang vào `box`; `key` là tên trang trong pg.
 function paginate(list, key, box, rerender) {
   const pages = Math.max(1, Math.ceil(list.length / pg.size));
@@ -348,7 +399,7 @@ function paginate(list, key, box, rerender) {
   PAGE_SIZES.forEach((n) => sel.append(new Option(n + " dòng/trang", String(n))));
   sel.value = String(pg.size);
   sel.onchange = () => {
-    pg.size = +sel.value; pg.sessions = pg.comps = pg.subs = 1;
+    pg.size = +sel.value; pg.sessions = pg.comps = pg.subs = pg.disc = 1;
     try { localStorage.setItem("kam_page_size", String(pg.size)); } catch {}
     rerender();
   };
@@ -792,10 +843,103 @@ $("#uAccount").onchange = (e) => { uf.account = e.target.value; pg.subs = 1; ren
 $("#uComp").onchange = (e) => { uf.comp = e.target.value; pg.subs = 1; renderUList(); };
 $("#uSearch").oninput = (e) => { uf.q = e.target.value; pg.subs = 1; renderUList(); };
 
+// ---------- Discord ----------
+let ddata = { config: {}, sources: [], summaries: [] };
+const dState = { filter: "all", busy: new Set() };
+
+function deAlias(text, map) {  // đổi bí danh Member_N về tên thật khi hiển thị (chỉ ở trình duyệt)
+  return String(text || "").replace(/Member_\d+/g, (m) => map[m] || m);
+}
+function sumCard(s) {
+  const map = {}; (s.participants || []).forEach((p) => { map[p.alias] = p.name; });
+  const t = (x) => deAlias(x, map), c = s.content || {}, card = el("div", "sumcard");
+  const src = ddata.sources.find((x) => x.id === s.source_id);
+  const head = el("div", "row between"); const l = el("div");
+  l.append(el("b", "", "#" + (src ? src.name : "kênh đã xóa")));
+  l.append(el("div", "meta", `${s.period_start ? fmtTime(s.period_start) : "?"} → ${s.period_end ? fmtTime(s.period_end) : "?"} · ${s.message_count} tin · ${s.model || ""}${s.anonymized ? "" : " · không ẩn danh"}`));
+  const del = el("button", "danger", "Xóa"); del.style.padding = "3px 10px";
+  del.onclick = async () => { if (!confirm("Xóa bản tóm tắt này?")) return; try { await api(`/discord/summaries/${s.id}`, { method: "DELETE" }); await loadDiscord(); } catch (e) { notice("#dNotice", e.message, true); } };
+  head.append(l, del); card.append(head);
+  if (s.truncated) card.append(el("div", "warnt", "Còn tin nhắn chưa được tóm tắt do chạm giới hạn; bấm \"Tóm tắt từ lần trước\" để đi tiếp."));
+  card.append(el("p", "ov", t(c.overview)));
+  const list = (title, items) => { if (!items || !items.length) return; card.append(el("h4", "", title)); const ul = el("ul"); items.forEach((i) => ul.append(el("li", "", i))); card.append(ul); };
+  (c.topics || []).forEach((tp) => list(t(tp.title), (tp.points || []).map(t)));
+  list("Quyết định", (c.decisions || []).map(t));
+  list("Việc cần làm", (c.action_items || []).map((a) => (a.who ? t(a.who) + ": " : "") + t(a.what)));
+  list("Câu hỏi còn mở", (c.open_questions || []).map(t));
+  if ((c.links || []).length) { card.append(el("h4", "", "Liên kết")); const ul = el("ul"); c.links.forEach((u) => { const li = el("li"); li.append(link(u, u)); ul.append(li); }); card.append(ul); }
+  if ((s.participants || []).length) card.append(el("div", "meta", "Người tham gia: " + s.participants.map((p) => `${p.name} (${p.count})`).join(", ")));
+  return card;
+}
+
+function renderDiscord() {
+  const cfg = ddata.config || {}, setup = $("#dSetup");
+  const miss = [];
+  if (!cfg.discord) miss.push("<b>DISCORD_BOT_TOKEN</b> (token của bot Discord)");
+  if (!cfg.gemini) miss.push("<b>GEMINI_API_KEY</b> (khóa miễn phí từ Google AI Studio)");
+  setup.classList.toggle("hidden", miss.length === 0);
+  setup.replaceChildren();
+  if (miss.length) { const d = el("div"); d.innerHTML = "Chưa thể dùng: thiếu biến môi trường " + miss.join(" và ") + " trên Vercel. Xem README, phần Discord."; setup.append(d); }
+  const box = $("#dSources"); box.replaceChildren();
+  for (const s of ddata.sources) {
+    const c = el("div", "card"); const h = el("div", "row between"); const l = el("div");
+    l.append(el("h3", "", "#" + (s.name || s.channel_id)), el("div", "sub", "ID " + s.channel_id));
+    const del = el("button", "danger", "Xóa"); del.style.padding = "3px 10px";
+    del.onclick = async () => { if (!confirm(`Xóa kênh #${s.name} và mọi bản tóm tắt của nó?`)) return; try { await api(`/discord/sources/${s.id}`, { method: "DELETE" }); await loadDiscord(); } catch (e) { notice("#dNotice", e.message, true); } };
+    h.append(l, del); c.append(h);
+    c.append(el("div", "sub", s.last_summarized_at ? "Tóm tắt lần cuối " + ago(s.last_summarized_at) : "Chưa tóm tắt lần nào"));
+    if (s.last_error) c.append(el("div", "err", s.last_error));
+    const act = el("div", "srcact"), busy = dState.busy.has(s.id);
+    const run = (body) => async (ev) => {
+      dState.busy.add(s.id); renderDiscord(); notice("#dNotice", "Đang đọc tin nhắn và tóm tắt…", false);
+      try {
+        const r = await api(`/discord/sources/${s.id}/summarize`, { method: "POST", body });
+        await loadDiscord();
+        notice("#dNotice", r.empty ? "Không có tin nhắn mới để tóm tắt." : "Đã tạo bản tóm tắt.", false);
+      } catch (e) { await loadDiscord(); notice("#dNotice", e.message, true); }
+      finally { dState.busy.delete(s.id); renderDiscord(); }
+    };
+    const b1 = el("button", "primary", "Tóm tắt từ lần trước"); b1.disabled = busy; b1.onclick = run({ mode: "since_last" });
+    const sel = el("select"); sel.setAttribute("aria-label", "Khoảng thời gian");
+    [[6, "6 giờ qua"], [24, "24 giờ qua"], [72, "3 ngày qua"], [168, "7 ngày qua"]].forEach(([h2, t]) => sel.append(new Option(t, String(h2))));
+    sel.value = "24"; sel.disabled = busy;
+    const b2 = el("button", "", "Tóm tắt"); b2.disabled = busy; b2.onclick = (ev) => run({ mode: "hours", hours: +sel.value })(ev);
+    act.append(b1, sel, b2); c.append(act); box.append(c);
+  }
+  $("#dSrcEmpty").classList.toggle("hidden", ddata.sources.length > 0);
+  const f = $("#dFilter"); f.replaceChildren(); f.append(new Option("Mọi kênh", "all"));
+  ddata.sources.forEach((s) => f.append(new Option("#" + s.name, String(s.id))));
+  if (![...f.options].some((o) => o.value === dState.filter)) dState.filter = "all";
+  f.value = dState.filter;
+  const list = ddata.summaries.filter((s) => dState.filter === "all" || String(s.source_id) === dState.filter);
+  const wrap = $("#dList"); wrap.replaceChildren();
+  paginate(list, "disc", $("#dPager"), renderDiscord).forEach((s) => wrap.append(sumCard(s)));
+  $("#dCount").textContent = `${list.length} bản tóm tắt`;
+  $("#dEmpty").classList.toggle("hidden", list.length > 0);
+}
+
+async function loadDiscord() {
+  try { ddata = await api("/discord"); } catch (e) {
+    if (e.message === "Chưa đăng nhập") return;
+    showApp(); notice("#dNotice", e.message, true); return;
+  }
+  showApp(); renderDiscord();
+}
+$("#dFilter").onchange = (e) => { dState.filter = e.target.value; pg.disc = 1; renderDiscord(); };
+$("#btnAddChan").onclick = () => { $("#chanId").value = ""; $("#chanErr").textContent = ""; $("#dlgChan").showModal(); };
+$("#chanCancel").onclick = () => $("#dlgChan").close();
+$("#chanForm").addEventListener("submit", async (e) => {
+  e.preventDefault(); const b = $("#chanSave"); b.disabled = true; $("#chanErr").textContent = "";
+  try { await api("/discord/sources", { method: "POST", body: { channel_id: $("#chanId").value.trim() } }); $("#dlgChan").close(); await loadDiscord(); }
+  catch (err) { $("#chanErr").textContent = err.message; }
+  finally { b.disabled = false; }
+});
+
 // ---------- điều hướng ----------
 async function route() {
   const page = location.hash.startsWith("#/sessions") ? "sessions"
-    : location.hash.startsWith("#/submissions") ? "submissions" : "accounts";
+    : location.hash.startsWith("#/submissions") ? "submissions"
+    : location.hash.startsWith("#/discord") ? "discord" : "accounts";
   $("#viewAcc").classList.toggle("hidden", page !== "accounts");
   $("#viewSes").classList.toggle("hidden", page !== "sessions");
   $("#actAcc").classList.toggle("hidden", page !== "accounts");
@@ -803,9 +947,12 @@ async function route() {
   $("#viewSub").classList.toggle("hidden", page !== "submissions");
   $("#actSub").classList.toggle("hidden", page !== "submissions");
   $("#navSub").classList.toggle("active", page === "submissions");
+  $("#viewDis").classList.toggle("hidden", page !== "discord");
+  $("#actDis").classList.toggle("hidden", page !== "discord");
+  $("#navDis").classList.toggle("active", page === "discord");
   $("#navAcc").classList.toggle("active", page === "accounts");
   $("#navSes").classList.toggle("active", page === "sessions");
-  await (page === "sessions" ? loadSessions() : page === "submissions" ? loadSubmissions() : loadAccounts());
+  await (page === "sessions" ? loadSessions() : page === "submissions" ? loadSubmissions() : page === "discord" ? loadDiscord() : loadAccounts());
 }
 window.addEventListener("hashchange", route);
 route();
