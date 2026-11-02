@@ -41,6 +41,11 @@ class FakePostgREST:
             if k in RESERVED:
                 continue
             op, _, val = v.partition(".")
+            if op == "in":
+                items = [x for x in val.strip("()").split(",") if x != ""]
+                conds.append(sql.SQL("{} = ANY(%s)").format(sql.Identifier(k)))
+                vals.append(items)
+                continue
             if op not in OPS:
                 raise ValueError(f"toán tử không hỗ trợ: {op}")
             conds.append(sql.SQL("{} {} %s").format(sql.Identifier(k), sql.SQL(OPS[op])))

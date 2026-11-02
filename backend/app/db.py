@@ -109,6 +109,11 @@ def eq(v) -> str:
     return f"eq.{v}"
 
 
+def in_ints(values) -> str:
+    """Bộ lọc `in.(1,2,3)` cho cột số nguyên (ép kiểu int để không chèn được ký tự lạ vào URL)."""
+    return "in.(" + ",".join(str(int(v)) for v in values) + ")"
+
+
 def select(table: str, columns: str = "*", filters: dict | None = None, order: str | None = None, limit: int | None = None) -> list[dict]:
     params = [("select", columns)]
     params += [(k, v) for k, v in (filters or {}).items()]

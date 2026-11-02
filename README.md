@@ -90,6 +90,7 @@ Không có cách hợp lệ nào để đọc chat tự động mà không dùng
 - **Loại máy (GPU/TPU/CPU)**: dòng trong danh sách của Kaggle có thể thiếu thông tin máy, nên mỗi quét sẽ hỏi lại metadata của từng phiên bản (tối đa `SESSIONS_ACCEL_BUDGET` cái) và chỉ ghi "CPU" khi đã xác minh; chưa xác minh được thì hiện "Chưa rõ" và được kiểm tra tiếp ở lần quét sau.
 - **Notebook đã xóa**: khi danh sách Kaggle trả về đầy đủ (ít hơn `SESSIONS_LIMIT`) mà một notebook đã lưu không còn trong đó, các dòng của nó được đánh dấu "Đã xóa", không tính là đang chạy và ẩn khỏi mục "Mọi trạng thái" (chọn riêng "Notebook đã xóa" để xem). Danh sách bị cắt theo giới hạn hoặc trả về rỗng thì không kết luận gì, để tránh đánh dấu nhầm.
 - **Dòng "đang chạy" nhưng không còn trong danh sách** (notebook đã xóa, hoặc nằm ngoài `SESSIONS_LIMIT` notebook gần nhất): mỗi lần quét app hỏi thẳng Kaggle trạng thái của tối đa 15 notebook như vậy; 404 thì đánh dấu "Đã xóa", nếu không thì cập nhật trạng thái thật. Nếu bạn có nhiều notebook hơn `SESSIONS_LIMIT` (mặc định 30), nên tăng giá trị này.
+- **Xóa dữ liệu đã lấy về**: ở trang Sessions tick các dòng rồi "Xóa đã chọn", hoặc "Xóa tất cả đang lọc", hoặc mở một dòng và bấm "Xóa dòng này khỏi database". Chỉ xóa trong database của bạn, không đụng tới Kaggle; bấm "Làm mới sessions" sẽ lấy lại những notebook Kaggle còn liệt kê. Phiên bản chạy cũ hơn và notebook đã bị xóa trên Kaggle thì không quay lại, và thời điểm "quan sát lần đầu" được tính lại.
 - **Cập nhật schema**: sau khi nâng cấp, chạy lại toàn bộ `supabase/schema.sql` trong SQL Editor (idempotent) để có bảng `kernel_sessions` và cột mới của `accounts`. Trang Tài khoản vẫn dùng được nếu chưa chạy, riêng trang Sessions sẽ báo 503 kèm hướng dẫn. Bản có tab Submissions thêm 2 bảng (`competition_entries`, `submissions`) và 2 cột của `accounts`; cần chạy lại schema thì tab đó mới dùng được.
 - Giao diện chỉ còn nút **Làm mới tất cả** và **Xóa** trên mỗi tài khoản; các endpoint sửa tài khoản, làm mới từng tài khoản, notebook và lịch sử quota vẫn còn ở backend.
 - Mỗi lần làm mới ghi một snapshot; snapshot cũ hơn 90 ngày tự bị xóa.
@@ -119,3 +120,4 @@ Không có cách hợp lệ nào để đọc chat tự động mà không dùng
 | POST, DELETE | `/api/discord/sources`, `/api/discord/sources/{id}` | Thêm / xóa kênh |
 | POST | `/api/discord/sources/{id}/summarize` | Tóm tắt (`{"mode":"since_last"}` hoặc `{"mode":"hours","hours":24}`) |
 | DELETE | `/api/discord/summaries/{id}` | Xóa một bản tóm tắt |
+| POST | `/api/sessions/delete` | Xóa các dòng session đã lấy về (`{"ids":[...]}`, tối đa 2000) |

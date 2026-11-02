@@ -17,7 +17,7 @@
   body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   header { display: flex; align-items: center; gap: 12px; padding: 12px 24px; background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
   header h1 { font-size: 17px; margin: 0 8px 0 0; }
-  header .spacer { flex: 1; }
+  header .spacer, .toolbar .spacer { flex: 1; }
   nav { display: flex; gap: 4px; }
   nav a { padding: 6px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; font-size: 14px; }
   nav a:hover { background: var(--hover); }
@@ -191,10 +191,14 @@
         <label class="chk"><input type="checkbox" id="fComp"> Chỉ gắn competition</label>
         <input type="search" id="fSearch" placeholder="Tìm notebook, competition…" aria-label="Tìm kiếm">
         <span class="sub" id="sCount"></span>
+        <span class="spacer"></span>
+        <button id="btnDelSel" class="danger" disabled>Xóa đã chọn (0)</button>
+        <button id="btnDelAll" class="danger" disabled>Xóa tất cả đang lọc</button>
       </div>
       <div class="tablewrap">
         <table>
           <thead><tr>
+            <th style="width:32px"><input type="checkbox" id="selPage" aria-label="Chọn cả trang"></th>
             <th>Trạng thái</th><th>Notebook</th><th>Tài khoản</th><th>Máy</th>
             <th>Thời gian chạy</th><th>Bắt đầu</th><th>Competition</th><th></th>
           </tr></thead>
@@ -330,6 +334,7 @@ let accounts = [];
 let sdata = { accounts: [], sessions: [], now: null };
 const sf = { status: "all", account: "all", accel: "all", comp: false, q: "" };
 const expanded = new Set();
+const selected = new Set();  // id các dòng session được tick (giữ khi chuyển trang)
 
 async function api(path, opts = {}) {
   const r = await fetch("/api" + path, {
@@ -570,7 +575,7 @@ function linkList(items, urlFn) {
 }
 
 function renderDetail(s) {
-  const tr = el("tr", "detail"), td = el("td"); td.colSpan = 8;
+  const tr = el("tr", "detail"), td = el("td"); td.colSpan = 9;
   const g = el("div", "kv");
   g.append(
     kv("Phiên bản", s.version ? `v${s.version}` : "—"),
@@ -589,11 +594,17 @@ function renderDetail(s) {
     kv("Cập nhật lần cuối", fmtTime(s.updated_at)),
   );
   if (s.failure_message) { const f = kv("Thông báo lỗi", s.failure_message); f.style.gridColumn = "1 / -1"; f.querySelector(".v").style.color = "var(--bad)"; g.append(f); }
+  const act = el("div", "actions"); const del = el("button", "danger", "Xóa dòng này khỏi database");
+  del.onclick = (ev) => { ev.stopPropagation(); deleteSessions([s.id], `dòng "${s.title || s.ref}"`); };
+  act.append(del); g.append(act);
   td.append(g); tr.append(td); return tr;
 }
 
 function renderSessionRow(s, nowMs) {
   const tr = el("tr", "srow");
+  const ck = el("td"); const cb = el("input"); cb.type = "checkbox"; cb.checked = selected.has(s.id); cb.setAttribute("aria-label", "Chọn dòng");
+  cb.onclick = (ev) => { ev.stopPropagation(); cb.checked ? selected.add(s.id) : selected.delete(s.id); syncSelection(); };
+  ck.append(cb); tr.append(ck);
   const [label, cls] = statusInfo(s.status);
   const st = el("td"); st.append(el("span", "badge " + cls, label)); tr.append(st);
 
@@ -659,9 +670,11 @@ function renderSessions() {
   const nowMs = Date.now(), list = filtered();
   renderChips(list, nowMs); renderAccStrip(nowMs);
   const body = $("#sBody"); body.replaceChildren();
-  for (const s of paginate(list, "sessions", $("#sPager"), renderSessions)) {
+  const pageRows = paginate(list, "sessions", $("#sPager"), renderSessions);
+  for (const s of pageRows) {
     body.append(renderSessionRow(s, nowMs)); if (expanded.has(s.id)) body.append(renderDetail(s));
   }
+  pageRowsCache = pageRows; filteredCache = list; syncSelection();
   $("#sCount").textContent = `${list.length}/${sdata.sessions.length} session`;
   const empty = $("#sEmpty");
   empty.classList.toggle("hidden", list.length > 0);
@@ -669,6 +682,31 @@ function renderSessions() {
     ? "Không có session nào khớp bộ lọc."
     : 'Chưa có dữ liệu. Bấm "Làm mới sessions" để lấy từ Kaggle.';
 }
+
+let pageRowsCache = [], filteredCache = [];
+function syncSelection() {
+  const alive = new Set(sdata.sessions.map((s) => s.id));
+  [...selected].forEach((id) => { if (!alive.has(id)) selected.delete(id); });  // dòng đã biến mất khỏi dữ liệu
+  const n = selected.size, all = pageRowsCache.length > 0 && pageRowsCache.every((s) => selected.has(s.id));
+  $("#btnDelSel").textContent = `Xóa đã chọn (${n})`; $("#btnDelSel").disabled = n === 0;
+  $("#btnDelAll").textContent = `Xóa tất cả đang lọc (${filteredCache.length})`; $("#btnDelAll").disabled = filteredCache.length === 0;
+  const sp = $("#selPage"); sp.checked = all; sp.indeterminate = !all && pageRowsCache.some((s) => selected.has(s.id));
+}
+
+async function deleteSessions(ids, what) {
+  const msg = `Xóa ${what} khỏi database?\n\nChỉ xóa dữ liệu đã lấy về, không ảnh hưởng notebook trên Kaggle. Bấm "Làm mới sessions" để lấy lại những notebook Kaggle còn liệt kê (phiên bản chạy cũ hơn hoặc notebook đã bị xóa sẽ không quay lại; thời điểm quan sát lần đầu được tính lại).`;
+  if (!confirm(msg)) return;
+  try {
+    const r = await api("/sessions/delete", { method: "POST", body: { ids } });
+    ids.forEach((id) => { selected.delete(id); expanded.delete(id); });
+    await loadSessions();
+    notice("#sNotice", `Đã xóa ${r.deleted} dòng. Bấm "Làm mới sessions" nếu muốn lấy lại từ Kaggle.`, false);
+  } catch (e) { notice("#sNotice", e.message, true); }
+}
+
+$("#selPage").onclick = (e) => { pageRowsCache.forEach((s) => (e.target.checked ? selected.add(s.id) : selected.delete(s.id))); renderSessions(); };
+$("#btnDelSel").onclick = () => deleteSessions([...selected], `${selected.size} dòng đã chọn`);
+$("#btnDelAll").onclick = () => deleteSessions(filteredCache.map((s) => s.id), `${filteredCache.length} dòng đang lọc`);
 
 function syncAccountFilter() {
   const sel = $("#fAccount"); sel.replaceChildren();

@@ -349,6 +349,21 @@ def list_sessions():
     return {"now": db.iso(db.utcnow()), "accounts": accounts, "sessions": rows}
 
 
+class DeleteIds(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=2000)
+
+
+@app.post("/api/sessions/delete", dependencies=[Depends(require_auth)])
+def delete_sessions(body: DeleteIds):
+    """Xóa các dòng session đã lấy về khỏi database. Không đụng tới Kaggle; "Làm mới sessions" sẽ lấy lại
+    những notebook Kaggle còn liệt kê (phiên bản cũ hơn, notebook đã xóa thì không quay lại)."""
+    ids = sorted(set(body.ids))
+    deleted = 0
+    for i in range(0, len(ids), 200):  # chia nhỏ để URL không quá dài
+        deleted += len(db.delete("kernel_sessions", {"id": db.in_ints(ids[i:i + 200])}))
+    return {"deleted": deleted}
+
+
 @app.post("/api/sessions/refresh", dependencies=[Depends(require_auth)])
 async def refresh_sessions():
     return await refresh_sessions_all()

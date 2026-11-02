@@ -592,3 +592,52 @@ def test_recheck_error_is_shown_not_silent():
     out = sessions.merge(1, [item("me/y", 1)], known, now, rechecked={"me/x": {"error": "503 busy"}})
     x = next(r for r in out if r["ref"] == "me/x")
     assert x["status"] == "running" and "503 busy" in x["failure_message"]
+
+
+def test_delete_fetched_rows_and_refetch_restores_them(client, tmp_path):
+    login(client); add(client, "acc1")
+    set_scenario(tmp_path, "token-aaaaaaaa", {"items": [item("me/a", 1, "complete", duration_seconds=60.0),
+                                                       item("me/b", 1, "running"), item("me/c", 1, "error")]})
+    refresh(client)
+    all_rows = rows(client)
+    ids = {r["ref"]: r["id"] for r in all_rows}
+    r = client.post("/api/sessions/delete", json={"ids": [ids["me/a"], ids["me/b"], 999999]})
+    assert r.status_code == 200 and r.json() == {"deleted": 2}  # id không tồn tại thì bỏ qua
+    assert [x["ref"] for x in rows(client)] == ["me/c"]
+    assert client.get("/api/accounts").json()[0]["running_sessions"] == 0
+    refresh(client)  # lấy lại từ Kaggle
+    assert sorted(x["ref"] for x in rows(client)) == ["me/a", "me/b", "me/c"]
+    again = {x["ref"]: x for x in rows(client)}
+    assert again["me/b"]["status"] == "running" and again["me/c"]["id"] == ids["me/c"]  # dòng không bị xóa giữ nguyên id
+    # probe không nhận hàng đã xóa như "đã biết": me/a phải được hỏi lại đầy đủ
+    log = [json.loads(l) for l in (tmp_path / "probe.log").read_text().splitlines()]
+    assert "me/a" not in log[1]["opts"]["known"] and "me/b" not in log[1]["opts"]["known"]  # hàng đã xóa không còn được coi là đã biết
+    assert log[1]["opts"]["known"]["me/c"]["status"] == "error"
+
+
+def test_delete_does_not_touch_other_rows_or_tables(client, tmp_path):
+    login(client); add(client, "acc1"); add(client, "acc2", "token-bbbbbbbb")
+    for t in ("token-aaaaaaaa", "token-bbbbbbbb"):
+        set_scenario(tmp_path, t, {"items": [item("me/a", 1, "complete")]})
+    refresh(client)
+    victim = next(r for r in rows(client) if r["account_id"] == client.get("/api/accounts").json()[0]["id"])
+    client.post("/api/sessions/delete", json={"ids": [victim["id"]]})
+    left = rows(client)
+    assert len(left) == 1 and left[0]["id"] != victim["id"]
+    assert len(client.get("/api/accounts").json()) == 2  # tài khoản còn nguyên
+
+
+def test_delete_many_ids_in_chunks_and_validation(client, tmp_path):
+    login(client); add(client, "acc1")
+    set_scenario(tmp_path, "token-aaaaaaaa", {"items": [item(f"me/n{i}", 1, "complete") for i in range(5)]})
+    refresh(client)
+    ids = [r["id"] for r in rows(client)]
+    assert client.post("/api/sessions/delete", json={"ids": ids + list(range(10_000, 10_450))}).json() == {"deleted": 5}
+    assert rows(client) == []
+    for bad in ({"ids": []}, {"ids": ["1; drop table x"]}, {"ids": list(range(2001))}, {}):
+        assert client.post("/api/sessions/delete", json=bad).status_code == 422
+    assert client.post("/api/sessions/delete", json={"ids": [1]}).status_code == 200
+
+
+def test_delete_requires_login(client):
+    assert client.post("/api/sessions/delete", json={"ids": [1]}).status_code == 401
